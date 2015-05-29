@@ -27,12 +27,12 @@ def wait_for_task(task):
 		if task.info.state == vim.TaskInfo.State.queued:
 			time.sleep(5)
 
-def check_dvs_state(module):
-	dvs_name = module.params['dvs_name']
+def check_vds_state(module):
+	vds_name = module.params['vds_name']
 	try:
 		content = module.params['content']
-		dvs = find_dvs_by_name(content, dvs_name)
-		if dvs is None:
+		vds = find_vds_by_name(content, vds_name)
+		if vds is None:
 			return 'absent'
 		else:
 			return 'present'
@@ -44,13 +44,13 @@ def check_dvs_state(module):
 def state_exit_unchanged(module):
 	module.exit_json(changed=False)
 
-def state_destroy_dvs(module):
+def state_destroy_vds(module):
 	# TODO
 	module.exit_json(changed=False)
 
-def state_create_dvs(module):
+def state_create_vds(module):
 	content = module.params['content']
-	dvs_name = module.params['dvs_name']
+	vds_name = module.params['vds_name']
 	numUplinks = module.params['numUplinks']
 	numPorts = module.params['numPorts']
 	prodVersion = module.params['productVersion']
@@ -62,26 +62,26 @@ def state_create_dvs(module):
 	try:
 		if not module.check_mode:
 			uplink_port_names = []
-			dvs_create_spec = vim.DistributedVirtualSwitch.CreateSpec()
-			dvs_config_spec = vim.DistributedVirtualSwitch.ConfigSpec()
-			dvs_config_spec.name = dvs_name
-			dvs_config_spec.uplinkPortPolicy = vim.DistributedVirtualSwitch.NameArrayUplinkPortPolicy()
+			vds_create_spec = vim.DistributedVirtualSwitch.CreateSpec()
+			vds_config_spec = vim.DistributedVirtualSwitch.ConfigSpec()
+			vds_config_spec.name = vds_name
+			vds_config_spec.uplinkPortPolicy = vim.DistributedVirtualSwitch.NameArrayUplinkPortPolicy()
 
 			for x in range(numUplinks):
-				uplink_port_names.append("%s Uplink %d" % (dvs_name, x+1))
-			dvs_config_spec.uplinkPortPolicy.uplinkPortName = uplink_port_names
-			dvs_config_spec.numStandalonePorts = int(numPorts)
+				uplink_port_names.append("%s Uplink %d" % (vds_name, x+1))
+			vds_config_spec.uplinkPortPolicy.uplinkPortName = uplink_port_names
+			vds_config_spec.numStandalonePorts = int(numPorts)
 
-			dvs_create_spec.configSpec = dvs_config_spec
-			dvs_create_spec.productInfo = vim.dvs.ProductSpec(version=prodVersion)
+			vds_create_spec.configSpec = vds_config_spec
+			vds_create_spec.productInfo = vim.vds.ProductSpec(version=prodVersion)
 
-			dvs_capability = vim.DistributedVirtualSwitch.Capability()
-			dvs_feature_cap = vim.DistributedVirtualSwitch.FeatureCapability()
-			#dvs_feature_cap.networkResourceManagementSupported = netResMgmtEnabled
-			dvs_feature_cap.networkResourceManagementSupported = True
-			dvs_capability.featuresSupported = dvs_feature_cap
+			vds_capability = vim.DistributedVirtualSwitch.Capability()
+			vds_feature_cap = vim.DistributedVirtualSwitch.FeatureCapability()
+			#vds_feature_cap.networkResourceManagementSupported = netResMgmtEnabled
+			vds_feature_cap.networkResourceManagementSupported = True
+			vds_capability.featuresSupported = vds_feature_cap
 
-			task = network_folder.CreateDVS_Task(dvs_create_spec)
+			task = network_folder.CreateDVS_Task(vds_create_spec)
 			wait_for_task(task)
 			module.exit_json(changed=True)
 	except Exception, e:
@@ -93,7 +93,7 @@ def main():
 		vs_port=dict(type='str'),
 		username=dict(type='str', aliases=['user', 'admin'], required=True),
 		password=dict(type='str', aliases=['pass', 'pwd'], required=True, no_log=True),
-		dvs_name=dict(type='str', required=True),
+		vds_name=dict(type='str', required=True),
 		numUplinks=dict(type='int', required=True),
 		numPorts=dict(type='int', required=True),
 		networkIOControl=dict(type='str', required=True, choices=['True', 'False']),
@@ -105,14 +105,14 @@ def main():
 	if not HAS_PYVMOMI:
 		module.fail_json(msg='pyvmomi is required for this module')
 
-	dvs_states = {
+	vds_states = {
 		'absent': {
-			'present': state_destroy_dvs,
+			'present': state_destroy_vds,
 			'absent': state_exit_unchanged,
 		},
 		'present': {
 			'present': state_exit_unchanged,
-			'absent': state_create_dvs,
+			'absent': state_create_vds,
 		}
 	}
 
@@ -129,8 +129,8 @@ def main():
 	content = si.RetrieveContent()
 	module.params['content'] = content
 
-	current_state = check_dvs_state(module)
-	dvs_states[desired_state][current_state](module)
+	current_state = check_vds_state(module)
+	vds_states[desired_state][current_state](module)
 
 	connect.Disconnect(si)
 
