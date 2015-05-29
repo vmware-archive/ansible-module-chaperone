@@ -165,7 +165,7 @@ def main():
 		state=dict(required=True, choices=['present', 'absent'], type='str')
 	)
 	module = AnsibleModule(argument_spec=argument_spec, supports_check_mode=True)
-	
+
 	if not HAS_PYVMOMI:
 		module.fail_json(msg='pyvmomi is required for this module')
 
@@ -179,9 +179,9 @@ def main():
 			'absent': state_create_port_group,
 		}
 	}
-	
+
 	desired_state = module.params['state']
-	
+
 	si = connect.SmartConnect(host=module.params['hostname'],
 					user=module.params['username'],
 					pwd=module.params['password'],
@@ -192,10 +192,10 @@ def main():
 
 	content = si.RetrieveContent()
 	module.params['content'] = content
-		
+
 	current_state = check_port_group_state(module)
 	port_group_states[desired_state][current_state](module)
-	
+
 	connect.Disconnect(si)
 
 

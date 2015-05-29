@@ -25,16 +25,16 @@ if hasattr(ssl, '_create_default_https_context') and hasattr(ssl, '_create_unver
 
 
 class DatacenterBuilder:
-    
+
     def __init__(self, module):
         self.module = module
         self.vsphere_host  = module.params.get('host')
-            
+
     def BuildDatacenter(self, user, password, datacenter):
         if self.vsphere_host is None:
             return True, dict(msg = 'Host cannot be none')
         print json.dumps({"datacenter" : datacenter})
-        
+
         try:
             self.si = SmartConnect(host = self.vsphere_host, user = user, pwd = password)
             print "Connected...."
@@ -50,16 +50,16 @@ class DatacenterBuilder:
         cluster_spec = vim.cluster.ConfigSpecEx()
         for cluster in clusters:
             cluster = host_folder.CreateClusterEx(name=cluster['name'], spec=cluster_spec)
-        
+
         atexit.register(Disconnect, self.si)
         print "Disconnected...."
         return False, dict(msg = 'Success')
- 
+
 def core(module):
     user = module.params.get('login')
     password = module.params.get('password')
     datacenter = module.params.get('datacenter')
-    
+
     dcBuilder = DatacenterBuilder(module)
     fail, res = dcBuilder.BuildDatacenter(user, password,  datacenter)
     return fail, res

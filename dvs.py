@@ -66,21 +66,21 @@ def state_create_dvs(module):
 			dvs_config_spec = vim.DistributedVirtualSwitch.ConfigSpec()
 			dvs_config_spec.name = dvs_name
 			dvs_config_spec.uplinkPortPolicy = vim.DistributedVirtualSwitch.NameArrayUplinkPortPolicy()
-	
+
 			for x in range(numUplinks):
 				uplink_port_names.append("%s Uplink %d" % (dvs_name, x+1))
 			dvs_config_spec.uplinkPortPolicy.uplinkPortName = uplink_port_names
 			dvs_config_spec.numStandalonePorts = int(numPorts)
-	
+
 			dvs_create_spec.configSpec = dvs_config_spec
 			dvs_create_spec.productInfo = vim.dvs.ProductSpec(version=prodVersion)
-			
+
 			dvs_capability = vim.DistributedVirtualSwitch.Capability()
 			dvs_feature_cap = vim.DistributedVirtualSwitch.FeatureCapability()
 			#dvs_feature_cap.networkResourceManagementSupported = netResMgmtEnabled
 			dvs_feature_cap.networkResourceManagementSupported = True
 			dvs_capability.featuresSupported = dvs_feature_cap
-			
+
 			task = network_folder.CreateDVS_Task(dvs_create_spec)
 			wait_for_task(task)
 			module.exit_json(changed=True)
@@ -101,7 +101,7 @@ def main():
 		state=dict(required=True, choices=['present', 'absent'], type='str')
 	)
 	module = AnsibleModule(argument_spec=argument_spec, supports_check_mode=True)
-	
+
 	if not HAS_PYVMOMI:
 		module.fail_json(msg='pyvmomi is required for this module')
 
@@ -115,9 +115,9 @@ def main():
 			'absent': state_create_dvs,
 		}
 	}
-	
+
 	desired_state = module.params['state']
-	
+
 	si = connect.SmartConnect(host=module.params['hostname'],
 					user=module.params['username'],
 					pwd=module.params['password'],
@@ -128,10 +128,10 @@ def main():
 
 	content = si.RetrieveContent()
 	module.params['content'] = content
-		
+
 	current_state = check_dvs_state(module)
 	dvs_states[desired_state][current_state](module)
-	
+
 	connect.Disconnect(si)
 
 
