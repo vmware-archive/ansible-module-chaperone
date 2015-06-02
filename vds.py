@@ -31,7 +31,7 @@ def check_vds_state(module):
 	vds_name = module.params['vds_name']
 	try:
 		content = module.params['content']
-		vds = find_vds_by_name(content, vds_name)
+		vds = find_dvs_by_name(content, vds_name)
 		if vds is None:
 			return 'absent'
 		else:
@@ -73,7 +73,7 @@ def state_create_vds(module):
 			vds_config_spec.numStandalonePorts = int(numPorts)
 
 			vds_create_spec.configSpec = vds_config_spec
-			vds_create_spec.productInfo = vim.vds.ProductSpec(version=prodVersion)
+			vds_create_spec.productInfo = vim.dvs.ProductSpec(version=prodVersion)
 
 			vds_capability = vim.DistributedVirtualSwitch.Capability()
 			vds_feature_cap = vim.DistributedVirtualSwitch.FeatureCapability()
