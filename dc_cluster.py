@@ -46,6 +46,11 @@ options:
             - Password to authenticate to vCenter instance.
         required: True
         default: null
+    port:
+        description:
+            - Port to access vCenter instance.
+        required: False
+        default: 443
     datacenter:
         description:
             - Datacenter structure that is expected to be created on the vCenter instance. 
@@ -61,12 +66,12 @@ class DatacenterBuilder:
         self.module = module
         self.vsphere_host  = module.params.get('host')
 
-    def BuildDatacenter(self, user, password, datacenter):
+    def BuildDatacenter(self, user, password, port=443, datacenter=dict()):
         if self.vsphere_host is None or user is None or password is None or not datacenter:
             return True, dict(msg = 'Host, login, password, and datacenter are required fields')
-
+        
         try:
-            self.si = SmartConnect(host = self.vsphere_host, user = user, pwd = password)
+            self.si = SmartConnect(host = self.vsphere_host, user = user, pwd = password, port=port)
             print "Connected...."
         except Exception as e:
             credentials = self.vsphere_host + " " + user +  " " + password
@@ -88,10 +93,11 @@ class DatacenterBuilder:
 def core(module):
     user = module.params.get('login')
     password = module.params.get('password')
+    port = module.params.get('port')
     datacenter = module.params.get('datacenter', dict())
-
+    
     dcBuilder = DatacenterBuilder(module)
-    fail, res = dcBuilder.BuildDatacenter(user, password,  datacenter)
+    fail, res = dcBuilder.BuildDatacenter(user=user, password=password,  port=port, datacenter=datacenter)
     return fail, res
 
 
@@ -101,6 +107,7 @@ def main():
             host = dict(required=True),
             login = dict(required=True),
             password = dict(required=True),
+            port = dict(type = 'int', default=443),
             datacenter = dict(type = 'dict', required=True)
         )
     )
