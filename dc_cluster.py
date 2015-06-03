@@ -23,6 +23,37 @@ import ssl
 if hasattr(ssl, '_create_default_https_context') and hasattr(ssl, '_create_unverified_context'):
     ssl._create_default_https_context = ssl._create_unverified_context
 
+DOCUMENTATION = '''
+---
+module: dc_cluster
+Short_description: Create Datacenter and clusters in vCenter 
+description:
+    - Provides an interface to add datacenters and clusters to a vCenter instance. 
+version_added: "0.1"
+options:
+    host:
+        description:
+            - Address to connect to the vCenter instance.
+        required: True
+        default: null
+    login:
+        description:
+            - Username to login to vCenter instance.
+        required: True
+        default: null
+    password:
+        description:
+            - Password to authenticate to vCenter instance.
+        required: True
+        default: null
+    datacenter:
+        description:
+            - Datacenter structure that is expected to be created on the vCenter instance. 
+        required: True
+        default: null
+
+author: Devin Nance
+'''
 
 class DatacenterBuilder:
 
@@ -31,9 +62,8 @@ class DatacenterBuilder:
         self.vsphere_host  = module.params.get('host')
 
     def BuildDatacenter(self, user, password, datacenter):
-        if self.vsphere_host is None:
-            return True, dict(msg = 'Host cannot be none')
-        print json.dumps({"datacenter" : datacenter})
+        if self.vsphere_host is None or user is None or password is None or not datacenter:
+            return True, dict(msg = 'Host, login, password, and datacenter are required fields')
 
         try:
             self.si = SmartConnect(host = self.vsphere_host, user = user, pwd = password)
@@ -53,12 +83,12 @@ class DatacenterBuilder:
 
         atexit.register(Disconnect, self.si)
         print "Disconnected...."
-        return False, dict(msg = 'Success')
+        return False, dict(msg = 'Datacenter created successfully')
 
 def core(module):
     user = module.params.get('login')
     password = module.params.get('password')
-    datacenter = module.params.get('datacenter')
+    datacenter = module.params.get('datacenter', dict())
 
     dcBuilder = DatacenterBuilder(module)
     fail, res = dcBuilder.BuildDatacenter(user, password,  datacenter)
@@ -71,12 +101,7 @@ def main():
             host = dict(required=True),
             login = dict(required=True),
             password = dict(required=True),
-            datacenter = dict(type = 'dict'),
-            guest_operations_manager = dict(),
-            put_file = dict(),
-            get_file = dict(),
-            spec = dict(type = 'dict'),
-            timeout = dict(type='int', default=60)
+            datacenter = dict(type = 'dict', required=True)
         )
     )
 
