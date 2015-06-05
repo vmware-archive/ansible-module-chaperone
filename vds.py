@@ -67,7 +67,7 @@ def state_create_vds(module):
 			vds_config_spec.name = vds_name
 			vds_config_spec.uplinkPortPolicy = vim.DistributedVirtualSwitch.NameArrayUplinkPortPolicy()
 
-			for x in range(numUplinks):
+			for x in range(int(numUplinks)):
 				uplink_port_names.append("%s Uplink %d" % (vds_name, x+1))
 			vds_config_spec.uplinkPortPolicy.uplinkPortName = uplink_port_names
 			vds_config_spec.numStandalonePorts = int(numPorts)
@@ -94,8 +94,8 @@ def main():
 		username=dict(type='str', aliases=['user', 'admin'], required=True),
 		password=dict(type='str', aliases=['pass', 'pwd'], required=True, no_log=True),
 		vds_name=dict(type='str', required=True),
-		numUplinks=dict(type='int', required=True),
-		numPorts=dict(type='int', required=True),
+		numUplinks=dict(type='str', required=True),
+		numPorts=dict(type='str', required=True),
 		networkIOControl=dict(type='str', required=True, choices=['True', 'False']),
 		productVersion=dict(type='str', required=True, choices=['6.0.0', '5.5.0', '5.1.0', '5.0.0']),
 		state=dict(required=True, choices=['present', 'absent'], type='str')
