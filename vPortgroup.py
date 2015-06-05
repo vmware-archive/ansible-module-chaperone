@@ -32,10 +32,10 @@ options (all of them are str type):
 			- The password of the vSphere vCenter
 		required: True
 		aliases: ['pass', 'pwd']
-	dvs_name:
+	vds_name:
 		description:
 			- The name of the distributed virtual switch where the port group is added to.
-				The dvs must exist prior to adding a new port group, otherwise, this
+				The vds must exist prior to adding a new port group, otherwise, this
 				process will fail.
 		required: True
 	port_group_name:
@@ -100,15 +100,15 @@ def wait_for_task(task):
 			time.sleep(10)
 
 def check_port_group_state(module):
-	dvs_name = module.params['dvs_name']
+	vds_name = module.params['vds_name']
 	port_group_name = module.params['port_group_name']
 	try:
 		content = module.params['content']
-		dvs = find_dvs_by_name(content, dvs_name)
-		if dvs is None:
+		vds = find_dvs_by_name(content, vds_name)
+		if vds is None:
 			module.fail_json(msg='Target distributed virtual switch does not exist!')
-		port_group = find_dvspg_by_name(dvs, port_group_name)
-		module.params['dvs'] = dvs
+		port_group = find_dvspg_by_name(vds, port_group_name)
+		module.params['vds'] = vds
 		if port_group is None:
 			return 'absent'
 		else:
@@ -129,7 +129,7 @@ def state_destroy_port_group(module):
 def state_create_port_group(module):
 	port_group_name = module.params['port_group_name']
 	content = module.params['content']
-	dvs = module.params['dvs']
+	vds = module.params['vds']
 	try:
 		if not module.check_mode:
 			port_group_spec = vim.dvs.DistributedVirtualPortgroup.ConfigSpec()
@@ -144,7 +144,7 @@ def state_create_port_group(module):
 			port_group_spec.type = pgTypeMap[module.params['port_binding']]
 			pg_policy = vim.dvs.DistributedVirtualPortgroup.PortgroupPolicy()
 			port_group_spec.policy = pg_policy
-			task = dvs.AddDVPortgroup_Task(spec=[port_group_spec])
+			task = vds.AddDVPortgroup_Task(spec=[port_group_spec])
 			status = task.info.state
 			wait_for_task(task)
 			module.exit_json(changed=True)
@@ -157,7 +157,7 @@ def main():
 		vs_port=dict(type='str'),
 		username=dict(type='str', aliases=['user', 'admin'], required=True),
 		password=dict(type='str', aliases=['pass', 'pwd'], required=True, no_log=True),
-		dvs_name=dict(type='str', required=True),
+		vds_name=dict(type='str', required=True),
 		port_group_name=dict(required=True, type='str'),
 		port_binding=dict(required=True, choices=['static', 'dynamic', 'ephemeral'], type='str'),
 		port_allocation=dict(choices=['fixed', 'elastic'], type='str'),
