@@ -27,11 +27,27 @@ def wait_for_task(task):
 		if task.info.state == vim.TaskInfo.State.queued:
 			time.sleep(5)
 
+def get_all_objs(content, vimtype):
+
+    obj = {}
+    container = content.viewManager.CreateContainerView(content.rootFolder, vimtype, True)
+    for managed_object_ref in container.view:
+        obj.update({managed_object_ref: managed_object_ref.name})
+    return obj
+
+def find_vds_by_name(content, vds_name):
+    vdSwitches = get_all_objs(content, [vim.dvs.VmwareDistributedVirtualSwitch])
+    for vds in vdSwitches:
+        if vds_name == vds.name:
+            return vds
+    return None
+
+
 def check_vds_state(module):
 	vds_name = module.params['vds_name']
 	try:
 		content = module.params['content']
-		vds = find_dvs_by_name(content, vds_name)
+		vds = find_vds_by_name(content, vds_name)
 		if vds is None:
 			return 'absent'
 		else:
@@ -136,7 +152,5 @@ def main():
 
 
 from ansible.module_utils.basic import *
-from ansible.module_utils.vmware import *
-
 if __name__ == '__main__':
-	main()
+    main()

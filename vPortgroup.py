@@ -99,15 +99,37 @@ def wait_for_task(task):
 		if task.info.state == vim.TaskInfo.State.queued:
 			time.sleep(10)
 
+def get_all_objs(content, vimtype):
+
+    obj = {}
+    container = content.viewManager.CreateContainerView(content.rootFolder, vimtype, True)
+    for managed_object_ref in container.view:
+        obj.update({managed_object_ref: managed_object_ref.name})
+    return obj
+
+def find_vds_by_name(content, vds_name):
+    vdSwitches = get_all_objs(content, [vim.dvs.VmwareDistributedVirtualSwitch])
+    for vds in vdSwitches:
+        if vds_name == vds.name:
+            return vds
+    return None
+
+def find_vdspg_by_name(vdSwitch, portgroup_name): 
+    portgroups = vdSwitch.portgroup 
+    for pg in portgroups: 
+        if pg.name == portgroup_name: 
+            return pg 
+    return None 
+
 def check_port_group_state(module):
 	vds_name = module.params['vds_name']
 	port_group_name = module.params['port_group_name']
 	try:
 		content = module.params['content']
-		vds = find_dvs_by_name(content, vds_name)
+		vds = find_vds_by_name(content, vds_name)
 		if vds is None:
 			module.fail_json(msg='Target distributed virtual switch does not exist!')
-		port_group = find_dvspg_by_name(vds, port_group_name)
+		port_group = find_vdspg_by_name(vds, port_group_name)
 		module.params['vds'] = vds
 		if port_group is None:
 			return 'absent'
@@ -200,7 +222,7 @@ def main():
 
 
 from ansible.module_utils.basic import *
-from ansible.module_utils.vmware import *
+#from ansible.module_utils.vmware import *
 
 if __name__ == '__main__':
 	main()
