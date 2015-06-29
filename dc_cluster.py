@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 
+
 try:
     import json
 except ImportError:
@@ -13,22 +14,23 @@ import urllib2
 import datetime
 import ast
 
+import ssl
+
+if hasattr(ssl, '_create_default_https_context') and hasattr(ssl, '_create_unverified_context'):
+    ssl._create_default_https_context = ssl._create_unverified_context
+
 try:
     from pyVim.connect import SmartConnect, Disconnect
     from pyVmomi import vim, vmodl
 except ImportError:
     print("failed=True msg='pyVmomi is required to run this module'")
 
-import ssl
-if hasattr(ssl, '_create_default_https_context') and hasattr(ssl, '_create_unverified_context'):
-    ssl._create_default_https_context = ssl._create_unverified_context
-
 DOCUMENTATION = '''
 ---
 module: dc_cluster
-Short_description: Create Datacenter and clusters in vCenter 
+Short_description: Create Datacenter and clusters in vCenter
 description:
-    - Provides an interface to add datacenters and clusters to a vCenter instance. 
+    - Provides an interface to add datacenters and clusters to a vCenter instance.
 version_added: "0.1"
 options:
     host:
@@ -53,75 +55,128 @@ options:
         default: 443
     datacenter:
         description:
-            - Datacenter structure that is expected to be created on the vCenter instance. 
+            - Datacenter structure that is expected to be created on the vCenter instance.
         required: True
         default: null
 
-author: Devin Nance
+author: Devin Nance, Jake Dupuy
 '''
 
-class DatacenterBuilder:
 
+class Createdatacenter(object):
     def __init__(self, module):
         self.module = module
-        self.vsphere_host  = module.params.get('host')
 
-    def BuildDatacenter(self, user, password, port=443, datacenter=dict()):
-        if self.vsphere_host is None or user is None or password is None or not datacenter:
-            return True, dict(msg = 'Host, login, password, and datacenter are required fields')
-        
+    def si_connection(self, vhost, user, password, port):
         try:
-            self.si = SmartConnect(host = self.vsphere_host, user = user, pwd = password, port=port)
-            print "Connected...."
+            self.SI = SmartConnect(host=vhost, user=user, pwd=password, port=port)
+        except:
+            creds = vhost + " " + user + " " + password
+            self.module.fail_json(msg='Cannot connect %s' % creds)
+        return self.SI
+
+    def get_content(self, connection):
+        try:
+            content = connection.RetrieveContent()
         except Exception as e:
-            credentials = self.vsphere_host + " " + user +  " " + password
-            self.module.fail_json(msg = 'Could not connect to host %s: %s' % (credentials, str(e)))
+            return False, dict(msg=str(e))
+        return content
 
-        content = self.si.RetrieveContent()
-        folder = content.rootFolder
-        dc = folder.CreateDatacenter(name=datacenter['name'])
-        clusters = datacenter['clusters']
-        host_folder = dc.hostFolder
-        cluster_spec = vim.cluster.ConfigSpecEx()
-        for cluster in clusters:
-            cluster = host_folder.CreateClusterEx(name=cluster['name'], spec=cluster_spec)
+    def create_configspec(self):
+        default_vmsettings = vim.cluster.DasVmSettings(restartPriority="high")
+        das_config = vim.cluster.DasConfigInfo(enabled=True,
+                                               admissionControlEnabled=True,
+                                               failoverLevel=1,
+                                               hostMonitoring="enabled",
+                                               vmMonitoring="vmAndAppMonitoring",
+                                               defaultVmSettings=default_vmsettings)
+        drs_config = vim.cluster.DrsConfigInfo(enabled=True,
+                                               defaultVmBehavior="fullyAutomated")
+        cluster_config = vim.cluster.ConfigSpecEx(dasConfig=das_config,
+                                                  drsConfig=drs_config)
+        return cluster_config
 
-        atexit.register(Disconnect, self.si)
-        print "Disconnected...."
-        return False, dict(msg = 'Datacenter created successfully')
+    def create_dc(self, connection, datacenter_name):
+        try:
+            content = self.get_content(connection)
+            folder = content.rootFolder
+            dc = folder.CreateDatacenter(name=datacenter_name)
+        except vmodl.MethodFault as meth_fault:
+            return True, dict(msg=meth_fault.msg)
+        except vmodl.RuntimeFault as run_fault:
+            return True, dict(msg=run_fault.msg)
+        return False, dc
+
+    def create_dc_clusters(self, dc, cluster_name):
+        try:
+            root_dc = dc
+            host_folder = root_dc.hostFolder
+            cluster_spec = self.create_configspec()
+            vio_cluster = host_folder.CreateClusterEx(name=cluster_name, spec=cluster_spec)
+        except vmodl.MethodFault as meth_fault:
+            return True, dict(msg=meth_fault.msg)
+        except vmodl.RuntimeFault as run_fault:
+            return True, dict(msg=run_fault.msg)
+        return False, vio_cluster
 
 def core(module):
-    user = module.params.get('login')
-    password = module.params.get('password')
-    port = module.params.get('port')
-    datacenter = module.params.get('datacenter', dict())
-    
-    dcBuilder = DatacenterBuilder(module)
-    fail, res = dcBuilder.BuildDatacenter(user=user, password=password,  port=port, datacenter=datacenter)
-    return fail, res
+    vcsvr = module.params.get('host')
+    vuser = module.params.get('login')
+    vpass = module.params.get('password')
+    vport = module.params.get('port')
+    vio_dc = module.params.get('datacenter', dict())
 
+    dc_name = vio_dc['name']
+    cluster_list = []
+
+    for cluster in vio_dc['clusters']:
+        cluster_name = cluster['name']
+        cluster_list.append(cluster_name)
+
+    v = Createdatacenter(module)
+    c = v.si_connection(vcsvr, vuser, vpass, vport)
+
+    config_spec = v.create_configspec()
+
+    failed_dc, vio_dc = v.create_dc(c, dc_name)
+
+    cluster_check = {}
+
+    if failed_dc:
+        return failed_dc, dict(msg=vio_dc)
+    else:
+        for cluster in cluster_list:
+            failed_c, new_clusters = v.create_dc_clusters(vio_dc, cluster)
+            cluster_check.update({failed_c: new_clusters})
+        if True in cluster_check:
+            for k, v in cluster_check.items():
+                if k is True:
+                    return k, dict(msg=v)
+        else:
+            failed = False
+            result = 'Successfully created Datacenter and clusters'
+            return failed, result
 
 def main():
     module = AnsibleModule(
-        argument_spec = dict(
-            host = dict(required=True),
-            login = dict(required=True),
-            password = dict(required=True),
-            port = dict(type = 'int', default=443),
-            datacenter = dict(type = 'dict', required=True)
+        argument_spec=dict(
+            host=dict(required=True),
+            login=dict(required=True),
+            password=dict(required=True),
+            port=dict(type='int'),
+            datacenter=dict(type='dict', required=True)
         )
     )
 
     try:
-        failed, result = core(module)
+        fail, result = core(module)
     except Exception as e:
         import traceback
-        module.fail_json(msg = '%s: %s\n%s' %(e.__class__.__name__, str(e), traceback.format_exc()))
+        module.fail_json(msg='%s: %s\n%s' % (e.__class__.__name__, str(e), traceback.format_exc()))
 
-    if failed:
+    if fail:
         module.fail_json(**result)
     else:
-        module.exit_json(**result)
+        module.exit_json(msg=result)
 
 from ansible.module_utils.basic import *
-main()
