@@ -19,9 +19,9 @@ def wait_for_task(task):
 			return True, task.info.result
 		if task.info.state == vim.TaskInfo.State.error:
 			try:
-				raise TaskError(task.info.error)
+				raise Exception(task.info.error)
 			except AttributeError:
-				raise TaskError("An unknown error has occurred")
+				raise Exception("An unknown error has occurred")
 		if task.info.state == vim.TaskInfo.State.running:
 			time.sleep(5)
 		if task.info.state == vim.TaskInfo.State.queued:
