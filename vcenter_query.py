@@ -86,27 +86,37 @@ class Getnamesids(object):
         return self.SI
 
     def get_content(self, connection):
-        content = connection.RetrieveContent()
+        try:
+            content = connection.RetrieveContent()
+        except Exception as e:
+            return str(e)
         return content
 
     def get_ids_dc(self, connection, vimtype):
-        content = self.get_content(connection)
-        name_id = {}
-        container = content.viewManager.CreateContainerView(content.rootFolder, vimtype, True)
-        for managed_object_ref in container.view:
-            mor_id = str(managed_object_ref).split(':')[1].replace("'", "")
-            name_id.update({managed_object_ref.name: mor_id})
-        return name_id
+        try:
+            content = self.get_content(connection)
+            name_id = {}
+            container = content.viewManager.CreateContainerView(content.rootFolder, vimtype, True)
+            for managed_object_ref in container.view:
+                mor_id = str(managed_object_ref).split(':')[1].replace("'", "")
+                name_id.update({managed_object_ref.name: mor_id})
+        except vmodl.MethodFault as meth_fault:
+            return True, dict(msg=meth_fault.msg)
+        except vmodl.RuntimeFault as runtime_fault:
+            return True, dict(msg=runtime_fault.msg)
+        return False, name_id
 
     def get_id_name(self, connection, vimtype, target_name):
-        vc_objts = self.get_ids_dc(connection, vimtype)
-        if target_name in vc_objts:
-            for k, v in vc_objts.iteritems():
-                if k == target_name:
-                    return v
-            else:
-                return None
-
+        try:
+            status, vc_objts = self.get_ids_dc(connection, vimtype)
+            if not status and target_name in vc_objts:
+                for k, v in vc_objts.iteritems():
+                    if k == target_name:
+                        return False, v
+            elif target_name not in vc_objts:
+                return True, dict(msg="Target Name: %s not Found" % target_name)
+        except Exception as e:
+            return True, dict(msg="ERROR: %s" % str(e))
 
 def core(module):
 
@@ -128,12 +138,13 @@ def core(module):
     names_ids = Getnamesids(module)
     connect = names_ids.si_connection(vcsvr, vuser, vpass, vport)
     vim_type = vim_rec_type[rec_type]
-    target_id = names_ids.get_id_name(connect, [vim_type], rec_name)
 
-    if target_id is not None:
-        return False, target_id
-    else:
-        return True, dict(msg='Failed to Find Resource Name')
+    try:
+        id_status, vc_id = names_ids.get_id_name(connect, [vim_type], rec_name)
+        return id_status, vc_id
+    except Exception as a:
+        return True, dict(msg=str(a))
+
 
 def main():
     module = AnsibleModule(
