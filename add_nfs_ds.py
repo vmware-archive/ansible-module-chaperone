@@ -74,7 +74,7 @@ options:
         default: readWrite
     nfstype:
         description:
-            - type of datastore specified, NFS
+            - type of datastore specified, NFSv3/4
         required: False
         default: NFS
 '''
@@ -108,17 +108,10 @@ class Createdsnfs(object):
             for k, v in vc_objt.items():
                 if k == target_name:
                     return False, v
-        except vmodl.MethodFault as meth_fault:
-            return True, dict(msg=meth_fault.msg)
-        except vmodl.RuntimeFault as run_fault:
-            return True, dict(msg=run_fault.msg)
-
-    def get_datacenter(self, connection, vimtype, datacenter_name):
-        status, datacenter_object_ref = self.get_vcobjt_byname(connection, vimtype, datacenter_name)
-        if not status:
-            return False, datacenter_object_ref
-        else:
-            return True, datacenter_object_ref
+        except vmodl.MethodFault as method_fault:
+            return True, dict(msg=method_fault.msg)
+        except vmodl.RuntimeFault as runtime_fault:
+            return True, dict(msg=runtime_fault.msg)
 
     def nas_spec(self, nfshost, nfspath, nfsname, nfsaccess, nfstype):
         nas_spec = vim.host.NasVolume.Specification(remoteHost=nfshost,
@@ -128,42 +121,41 @@ class Createdsnfs(object):
                                                     type=nfstype)
         return nas_spec
 
-    def create_nfs(self, clusters, nasconfigspec):
-        for cluster in clusters:
-            hosts_in_cluster = cluster.host
-            try:
-                for host in hosts_in_cluster:
-                    host.configManager.datastoreSystem.CreateNasDatastore(spec=nasconfigspec)
-            except vim.HostConfigFault as host_fault:
-                return True, dict(msg=host_fault.msg)
-            except vmodl.MethodFault as method_fault:
-                return True, dict(msg=method_fault.msg)
-        return False, dict(msg="Attached all hosts to nfs datastore")
+    def create_nfs(self, cluster, nasconfigspec):
+        try:
+            hosts = cluster.host
+            for host in hosts:
+                host.configManager.datastoreSystem.CreateNasDatastore(spec=nasconfigspec)
+        except vim.HostConfigFault as hostconfig_fault:
+            return True, dict(msg=hostconfig_fault.msg)
+        except vmodl.MethoFault as method_fault:
+            return True, dict(msg=method_fault.msg)
+        return False, dict(msg="Attached all hosts in %s cluster to nfs datastore" % cluster.name)
 
 def core(module):
     vcsvr = module.params.get('host')
     vuser = module.params.get('login')
     vpass = module.params.get('password')
     vport = module.params.get('port')
-    vio_dc = module.params.get('datacenter', dict())
     vnfshost = module.params.get('nfshost')
     vnfspath = module.params.get('nfspath')
     vnfsname = module.params.get('nfsname')
     vnfsaccess = module.params.get('nfsaccess')
     vnfstype = module.params.get('nfstype')
-
-    target_dc_name = vio_dc['name']
-    v = Createdsnfs(module)
-    c = v.si_connection(vcsvr, vuser, vpass, vport)
+    target_cluster_name = module.params.get('cluster')
+    
+    vnfs = Createdsnfs(module)
+    connection = vnfs.si_connection(vcsvr, vuser, vpass, vport)
 
     try:
-        status, target_dc_object = v.get_datacenter(c, [vim.Datacenter], target_dc_name)
-        if not status:
-            host_folder = target_dc_object.hostFolder
-            clusters_list = host_folder.childEntity
-            vnas_spec = v.nas_spec(vnfshost, vnfspath, vnfsname, vnfsaccess, vnfstype)
-            fail, result = v.create_nfs(clusters_list, vnas_spec)
-            return fail, result
+        cluser_status, target_cluster = vnfs.get_vcobjt_byname(connection , [vim.ClusterComputeResource], target_cluster_name)
+        if not cluster_status:
+            nas_specification = vnfs.nas_spec(vnfshost, vnfspath, vnfsname, vnfsaccess, vnfstype)
+            nfs_status, nfs_msg = vnfs.create_nfs(target_cluster, nas_specification)
+            if not nfs_status:
+                return False, nfs_msg
+            else:
+                return True, nfs_msg
     except Exception as e:
         return True, str(e)
 
@@ -174,7 +166,7 @@ def main():
             login=dict(required=True),
             password=dict(required=True),
             port=dict(type='int'),
-            datacenter=dict(type='dict', required=True),
+            cluster=dict(type='str', required=True),
             nfshost=dict(type='str', required=True),
             nfspath=dict(type='str', required=True),
             nfsname=dict(type='str', required=True),
