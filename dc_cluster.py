@@ -107,11 +107,10 @@ class Createdatacenter(object):
             return True, dict(msg=run_fault.msg)
         return False, dc
 
-    def create_dc_clusters(self, dc, cluster_name):
+    def create_dc_clusters(self, dc, cluster_name, cluster_spec):
         try:
             root_dc = dc
             host_folder = root_dc.hostFolder
-            cluster_spec = self.create_configspec()
             vio_cluster = host_folder.CreateClusterEx(name=cluster_name, spec=cluster_spec)
         except vmodl.MethodFault as meth_fault:
             return True, dict(msg=meth_fault.msg)
@@ -135,27 +134,18 @@ def core(module):
 
     v = Createdatacenter(module)
     c = v.si_connection(vcsvr, vuser, vpass, vport)
+    vconfig_spec = v.create_configspec()
+    dc_status, vio_dc = v.create_dc(c, dc_name)
 
-    config_spec = v.create_configspec()
-
-    failed_dc, vio_dc = v.create_dc(c, dc_name)
-
-    cluster_check = {}
-
-    if failed_dc:
-        return failed_dc, dict(msg=vio_dc)
-    else:
+    if not dc_status and type(vio_dc) is vim.Datacenter:
         for cluster in cluster_list:
-            failed_c, new_clusters = v.create_dc_clusters(vio_dc, cluster)
-            cluster_check.update({failed_c: new_clusters})
-        if True in cluster_check:
-            for k, v in cluster_check.items():
-                if k is True:
-                    return k, dict(msg=v)
-        else:
-            failed = False
-            result = 'Successfully created Datacenter and clusters'
-            return failed, result
+            new_cluster_status, new_cluster = v.create_dc_clusters(vio_dc, cluster, vconfig_spec)
+            if not new_cluster_status and type(new_cluster) is vim.ClusterComputeResource:
+                return new_cluster_status, dict(msg='Created Datacenter and Clusters')
+            else:
+                return new_cluster_status, dict(msg=new_cluster)
+    else:
+        return dc_status, dict(msg=vio_dc)
 
 def main():
     module = AnsibleModule(
@@ -168,15 +158,12 @@ def main():
         )
     )
 
-    try:
-        fail, result = core(module)
-    except Exception as e:
-        import traceback
-        module.fail_json(msg='%s: %s\n%s' % (e.__class__.__name__, str(e), traceback.format_exc()))
+    fail, result = core(module)
 
     if fail:
-        module.fail_json(**result)
+        module.fail_json(changed=False, msg=result)
     else:
-        module.exit_json(msg=result)
+        module.exit_json(changed=True, msg=result)
 
 from ansible.module_utils.basic import *
+main()
