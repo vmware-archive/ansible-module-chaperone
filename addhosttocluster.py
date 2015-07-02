@@ -108,7 +108,7 @@ class Addhostcluster(object):
             self.SI = SmartConnect(host=vhost, user=user, pwd=password, port=port)
         except:
             creds = vhost + " " + user + " " + password
-            print 'Cannot connect %s' % creds
+            self.module.fail_json(msg='Cannot connect to vcenter %s' % creds)
         return self.SI
 
     def get_content(self, connection):
@@ -200,9 +200,9 @@ def main():
     fail, result = core(module)
 
     if fail:
-        module.fail_json(**result)
+        module.fail_json(changed=False, result)
     else:
-        module.exit_json(msg=result)
+        module.exit_json(changed=True, msg=result)
 
 from ansible.module_utils.basic import *
 main()
