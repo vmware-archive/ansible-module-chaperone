@@ -56,7 +56,7 @@ options:
 '''
 EXAMPLES = '''
 - name: Get vCenter ID
-  ignore_errors: yes
+  ignore_errors: no
   local_action:
     module: vcenter_query
     host: vcenter_host
@@ -100,11 +100,11 @@ class Getnamesids(object):
             for managed_object_ref in container.view:
                 mor_id = str(managed_object_ref).split(':')[1].replace("'", "")
                 name_id.update({managed_object_ref.name: mor_id})
+            return False, name_id
         except vmodl.MethodFault as meth_fault:
             return True, dict(msg=meth_fault.msg)
         except vmodl.RuntimeFault as runtime_fault:
             return True, dict(msg=runtime_fault.msg)
-        return False, name_id
 
     def get_id_name(self, connection, vimtype, target_name):
         try:
@@ -162,21 +162,20 @@ def main():
 
     fail, result = core(module)
 
-    ansible_facts_dict = {
-        "changed": False,
-        "ansible_facts": {
-
-        }
-    }
-
-    resource_id = result
-    resource_var = module.params.get('resourcevarname')
-    ansible_facts_dict['ansible_facts'].update({resource_var: resource_id})
-    ansible_facts_dict['changed'] = True
-
     if fail:
-        module.fail_json(**result)
+        module.fail_json(msg=result)
     else:
+        ansible_facts_dict = {
+            "changed": False,
+            "ansible_facts": {
+
+            }
+        }
+
+        resource_id = result
+        resource_var = module.params.get('resourcevarname')
+        ansible_facts_dict['ansible_facts'].update({resource_var: resource_id})
+        ansible_facts_dict['changed'] = True
         print json.dumps(ansible_facts_dict)
 
 from ansible.module_utils.basic import *
