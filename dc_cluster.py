@@ -140,10 +140,10 @@ def core(module):
     if not dc_status and type(vio_dc) is vim.Datacenter:
         for cluster in cluster_list:
             new_cluster_status, new_cluster = v.create_dc_clusters(vio_dc, cluster, vconfig_spec)
-            if not new_cluster_status and type(new_cluster) is vim.ClusterComputeResource:
-                return new_cluster_status, dict(msg='Created Datacenter and Clusters')
-            else:
-                return new_cluster_status, dict(msg=new_cluster)
+        if not new_cluster_status and type(new_cluster) is vim.ClusterComputeResource:
+            return new_cluster_status, dict(msg='Created Datacenter and Clusters')
+        else:
+            return new_cluster_status, dict(msg=new_cluster)
     else:
         return dc_status, dict(msg=vio_dc)
 
