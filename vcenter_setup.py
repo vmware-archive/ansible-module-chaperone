@@ -207,7 +207,6 @@ class Vcenter(object):
         self.vds_name = self.datacenter_dict['vds']['name']
         self.portgroup_types = [pgtype for pgtype in self.datacenter_dict['vds']['portgroups'].iterkeys()]
 
-
         try:
             self.si = SmartConnect(host=self.vsphere_host, user=login_user, pwd=login_password, port=self.port)
         except:
@@ -381,8 +380,8 @@ class Datacenter(Vcenter):
 
 class Cluster(Vcenter):
 
-    @staticmethod
-    def create_configspec():
+
+    def create_configspec(self, vsan):
         default_vmsettings = vim.cluster.DasVmSettings(restartPriority="high")
         das_config = vim.cluster.DasConfigInfo(enabled=True,
                                                admissionControlEnabled=True,
@@ -390,10 +389,20 @@ class Cluster(Vcenter):
                                                hostMonitoring="enabled",
                                                vmMonitoring="vmAndAppMonitoring",
                                                defaultVmSettings=default_vmsettings)
+
         drs_config = vim.cluster.DrsConfigInfo(enabled=True,
                                                defaultVmBehavior="fullyAutomated")
-        cluster_config = vim.cluster.ConfigSpecEx(dasConfig=das_config,
-                                                  drsConfig=drs_config)
+        if vsan:
+            vsan_default_config = vim.vsan.cluster.ConfigInfo.HostDefaultInfo(autoClaimStorage=True)
+            vsan_config = vim.vsan.cluster.ConfigInfo(enabled=True,
+                                                  defaultConfig=vsan_default_config)
+
+            cluster_config = vim.cluster.ConfigSpecEx(dasConfig=das_config,
+                                                      drsConfig=drs_config,
+                                                      vsanConfig=vsan_config)
+        else:
+            cluster_config = vim.cluster.ConfigSpecEx(dasConfig=das_config,
+                                                      drsConfig=drs_config)
         return cluster_config
 
     def cluster_check(self, dc):
@@ -405,38 +414,56 @@ class Cluster(Vcenter):
         else:
             return False, None
 
-    def create_clusters(self, single_cluster_name=None):
-        try:
-            cluster_spec = self.create_configspec()
-            dc = self.get_target_object([vim.Datacenter], self.datacenter_name)
+    def get_vsan_val(self, cluster_name):
+        for k, v in self.datacenter_dict.items():
+            if k == 'clusters':
+                for i in v:
+                    for key, val in i.items():
+                        if val == cluster_name:
+                            return i['vsan']
 
-            if isinstance(dc, vim.Datacenter):
-                host_folder = dc.hostFolder
-                status, to_add = self.cluster_check(dc)
+    def create_clusters(self):
 
-                if single_cluster_name is None and not status:
-                    clusters = [host_folder.CreateClusterEx(name=cluster_name, spec=cluster_spec) \
-                                for cluster_name in self.clusters_names]
-                    clusternames = [c.name for c in clusters]
-                    return clusternames
+        dc = self.get_target_object([vim.Datacenter], self.datacenter_name)
 
-                elif status:
-                    clusters = [host_folder.CreateClusterEx(name=cluster_name, spec=cluster_spec) \
-                                for cluster_name in to_add]
-                    clusternames = [c.name for c in clusters]
-                    return clusternames
+        if dc and isinstance(dc, vim.Datacenter):
+            host_folder = dc.hostFolder
+        else:
+            dc = self.content.rootFolder.childEntity[0]
+            host_folder = dc.hostFolder
 
-                if single_cluster_name is not None:
-                    cluster = host_folder.CreateClusterEx(name=single_cluster_name, spec=cluster_spec)
-                    return cluster.name
-            else:
-                failmsg = "Datacenter %s not present" % self.datacenter_name
-                self.module.fail_json(msg=failmsg)
+        status, to_add = self.cluster_check(dc)
 
-        except (vim.fault.DuplicateName,
-                vmodl.fault.InvalidArgument,
-                vim.fault.InvalidName) as error:
-            self.module.fail_json(msg=error.msg)
+        clusters_created = []
+
+        if to_add:
+            for cluster_name in to_add:
+
+                vsan = self.get_vsan_val(cluster_name)
+                vsan = int(vsan)
+
+                cluster_spec = self.create_configspec(vsan)
+
+                try:
+                    cluster = host_folder.CreateClusterEx(name=cluster_name, spec=cluster_spec)
+                except vim.fault.DuplicateName as duplicate_name:
+                    self.module.fail_json(msg=duplicate_name.msg)
+                except vim.fault.InvalidName as invalid_name:
+                    self.module.fail_json(msg=invalid_name.msg)
+                except vmodl.fault.InvalidArgument as invalid_arg:
+                    self.module.fail_json(msg=invalid_arg.msg)
+                except vmodl.fault.NotSupported as not_supported:
+                    self.module.fail_json(msg=not_supported.msg)
+                except vmodl.MethodFault as method_fault:
+                    self.module.fail_json(msg=method_fault.msg)
+
+                clusters_created.append(cluster.name)
+
+            return clusters_created
+
+        else:
+            msg = "All clusters already there"
+            return msg
 
 
 class Hosts(Vcenter):
@@ -1173,25 +1200,22 @@ def core(module):
         dc_status, dc_check = d.check_dc()
 
         if not dc_status:
+            c = Cluster(module)
+
             dc = d.create_datacenter()
 
-            if isinstance(dc, vim.Datacenter):
-                c = Cluster(module)
-                clusters = c.create_clusters()
+            clusters_created = c.create_clusters()
 
-                message = "Created Datacenter: %s with Clusters: %s" % (dc.name, clusters)
-                return False, message
+            return False, clusters_created
+
         else:
-            c = Cluster(module)
-            status, need_to_add = c.cluster_check(dc_check)
 
-            if status:
-                clusters_added = c.create_clusters()
-                return False, clusters_added
-            else:
-                message = "Datacenter: %s with Clusters: %s already present" \
-                          % (c.datacenter_name, c.clusters_names)
-                return False, message
+            c = Cluster(module)
+            #create any missing clusters
+            clusters_created = c.create_clusters()
+
+            return False, clusters_created
+
 
     if add_hosts_all:
 
@@ -1299,7 +1323,7 @@ def main():
             usehostname=dict(required=False, choices=BOOLEANS, default=False),
             config_hosts=dict(required=True, choices=BOOLEANS),
             hostprofiles=dict(required=True, choices=BOOLEANS),
-            apply_hostprofiles=dict(required=True, choices=BOOLEANS)
+            apply_hostprofiles=dict(required=True, choices=BOOLEANS),
         )
     )
 
