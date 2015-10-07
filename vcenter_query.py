@@ -60,7 +60,7 @@ options:
     resourcetype:
         description:
             - vCenter resource type valid options are
-            - cluster, datacenter, datastore, dvs, dvs-port
+            - cluster, datacenter, datastore, dvs, dvs-port, vm
         required: True
         default: Null
     getfacts:
@@ -147,9 +147,9 @@ def core(module):
         'datacenter': vim.Datacenter,
         'datastore': vim.Datastore,
         'dvs': vim.DistributedVirtualSwitch,
-        'dvs-port': vim.Network
+        'dvs-port': vim.Network,
+        'vm': vim.VirtualMachine
     }
-
     names_ids = Getnamesids(module)
     connect = names_ids.si_connection(vcsvr, vuser, vpass, vport)
     vim_type = vim_rec_type[rec_type]
