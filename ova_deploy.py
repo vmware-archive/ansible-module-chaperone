@@ -5,11 +5,16 @@ import subprocess
 DOCUMENTATION = '''
 ---
 module: vraova_deploy
-Short_description: Module for deploying VRA ova
+Short_description: Module for deploying VRA ova through python
 description:
     - Provides an interface for deployment of ova in venter
 versoin_added: "0.1"
 options:
+    power_on:
+        description:
+            -Indicates whether the appliance needs to be powered ons.
+        required: True
+        default: Null
     vcenter_props:
         description:
             - Dictionary containing vcenter properties.
@@ -45,6 +50,7 @@ EXAMPLES = '''
   ignore_errors: yes
   local_action:
     module: ova_deploy
+    power_on: "{{vra_poweron}}"
     vcenter_props:
       vcenter_host: "{{ vcenter_host}}"
       vcenter_port: "{{ vcenter_port }}"
@@ -67,7 +73,6 @@ EXAMPLES = '''
       va-ssh-enabled: "{{vra_ssh_enabled}}"
       vami.hostname: "{{vra_host_name}}"
     option_props:
-      - powerOn
       - acceptAllEulas
       - allowExtraConfig
       - noSSLVerify
@@ -84,11 +89,13 @@ class OVA(object):
         stdout=subprocess.PIPE, stderr=subprocess.PIPE).communicate()
         return output,error
 
-    def append_command_with_list(self, opt_props):
+    def append_command_with_list(self, opt_props, power_on):
         option_command=''
         for element in opt_props:
             option_command='--'+element
             self.command.append(option_command)
+        if (power_on == '1'):
+            self.command.append("--powerOn")
         return self.command
 
     def append_command_with_dict(self, dict_props):
@@ -134,6 +141,7 @@ class OVA(object):
         return self.command
 
 def core(module):
+    power_on = module.params.get("power_on")
     res_props = module.params.get("resource_props")
     loc_props = module.params.get("location_props")
     ov_props = module.params.get("ova_props")
@@ -143,7 +151,7 @@ def core(module):
 
     ova = OVA(module)
     try:
-        ova.append_command_with_list(opt_props)
+        ova.append_command_with_list(opt_props, power_on)
         ova.append_command_with_dict(add_props)
         ova.append_command_with_instance_params(res_props)
         ova.append_command_with_ova_params(ov_props,loc_props)
@@ -156,6 +164,7 @@ def core(module):
 def main():
     module = AnsibleModule(
         argument_spec = dict(
+            power_on = dict(required=True, type='str'),
             resource_props = dict(type='dict',required=True),
             additional_props = dict(type='dict',required=True),
             location_props = dict(type='dict',required=True),
