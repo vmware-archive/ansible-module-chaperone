@@ -64,7 +64,7 @@ def check_vm_and_children(vm_name, virtual_machine, depth, module):
                 return
 
         if virtual_machine.name == vm_name:
-                module.fail_json(msg="Appliance exists!")
+                module.exit_json(msg="Appliance exists!")
 
         if hasattr(virtual_machine, 'childEntity'):
                 vmList = virtual_machine.childEntity
