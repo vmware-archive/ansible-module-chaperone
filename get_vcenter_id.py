@@ -21,8 +21,8 @@ except ImportError:
     import simplejson as json
 
 import atexit
-
 import ssl
+
 if hasattr(ssl, '_create_default_https_context') and hasattr(ssl, '_create_unverified_context'):
     ssl._create_default_https_context = ssl._create_unverified_context
 
@@ -41,17 +41,17 @@ description:
 versoin_added: "0.1"
 options:
     host:
-    resourcename:
+    vcenter_object_name:
         description:
             - vCenter inventory object name target
         required: True
         default: Null
-    resourcevarname:
+    ansible_variable_name:
         description:
             - Valid Ansible variable name for custom fact setting to returned id
         required: True
         default: Null
-    resourcetype:
+    vcenter_vim_type:
         description:
             - vCenter resource type valid options are
             - cluster, datacenter, datastore, dvs, dvs-port, vm
@@ -67,68 +67,61 @@ EXAMPLES = '''
     login: vcenter_user
     password: vcenter_password
     port: vcenter_port
-    resourcename: "{{ vio_cluster_mgmt }}"
-    resourcevarname: 'your_var_name'
-    resourcetype: 'cluster'
+    vcenter_object_name: "{{ vio_cluster_mgmt }}"
+    vcenter_vim_type: 'cluster'
+    ansible_variable_name: 'my_new_var_name'
 
 - name: test new custom var
   debug: msg="New var value --> {{ your_var_name }}"
 '''
 
-class Getnamesids(object):
+def si_connect(module):
+    try:
+        si = SmartConnect(host=module.params['host'],
+                          user=module.params['login'],
+                          pwd=module.params['password'],
+                          port=module.params['port'])
+    except:
+        failmsg = "Could not connect to virtualserver"
+        module.fail_json(msg=failmsg)
 
-    def __init__(self, module):
-       self.module = module
-       self.vsphere_host = module.params.get('host')
-       login_user = module.params.get('login')
-       login_password = module.params.get('password')
-       self.port = module.params.get('port')
+    atexit.register(Disconnect, si)
 
-       try:
-           self.si = SmartConnect(host=self.vsphere_host, user=login_user, pwd=login_password, port=self.port)
-       except:
-           failmsg = "Could not connect to virtualserver: %s with: %s %s" \
-                     % (self.vsphere_host, login_user, login_password)
-           self.module.fail_json(msg=failmsg)
+    return si
 
-       atexit.register(Disconnect, self.si)
-
-    @property
-    def content(self):
-        if not hasattr(self, '_content'):
-            self._content = self.si.RetrieveContent()
-        return self._content
-
-    def get_target_object(self, vimtype, name, getobject=None, moid=None):
-        '''
-        :param vimtype: valid vim type
-        :param name: name of the target (module.params.get('resourcename'))
-        :param getobject: specify True if wanting to return the target object
-        :param moid: specify True if wanting to return the moId property
-        :param return: will return None if name is not found, or the object, or the moId of target
-        '''
-        try:
-            limit = self.content.rootFolder
-            container = self.content.viewManager.CreateContainerView(limit, vimtype, True)
-        except Exception as e:
-            self.module.fail_json(msg="Could not create container view: {}".format(e))
+def get_id(module, si, vimtype, name, getobject=None, getmoid=None):
+    '''
+    :param si service instance
+    :param vimtype: valid vim type
+    :param name: name of the target (module.params.get('vcenter_object_name'))
+    :param getobject: specify True if wanting to return the target object
+    :param getmoid: specify True if wanting to return the moId property
+    '''
+    try:
+        content = si.RetrieveContent()
+        limit = content.rootFolder
+        container = content.viewManager.CreateContainerView(limit, vimtype, True)
 
         if name:
             for x in container.view:
                 if x.name == name:
-                    if moid:
+                    if getmoid:
                         return str(x._moId)
                     if getobject:
                         return x
+                else:
+                    module.fail_json(msg="Could not find specified name: {}".format(name))
         else:
-            fail_msg = "Please enter a valid name"
-            self.module.fail_json(msg=fail_msg)
+            module.fail_json(msg="Please specify a vcenter object name")
 
-    
+    except Exception as e:
+        module.fail_json(msg="Failed to get id for: {} error: {}".format(name, e))
+
+
 def core(module):
 
-    rec_name = module.params.get('resourcename')
-    rec_type = module.params.get('resourcetype')
+    vim_type = module.params['vcenter_vim_type']
+    vcenter_object_name = module.params['vcenter_object_name']
 
     vim_rec_type = {
         'cluster': vim.ClusterComputeResource,
@@ -139,21 +132,19 @@ def core(module):
         'vm': vim.VirtualMachine
     }
 
-    names_ids = Getnamesids(module)
-    
     try:
-        vim_type = vim_rec_type[rec_type]
+        vimtype = vim_rec_type[vim_type]
     except KeyError:
-        fail_msg = "resourcetype not Valid, Valid: cluster, datacenter, datastore, vds, vm"
-        module.fail_json(msg=fail_msg)
-        
-    object_id = names_ids.get_target_object([vim_type], rec_name, None, True)
-        
-    if object_id:
-        return False, object_id
-    else:
-        msg = "FAILED: %s" % object_id
-        return True, msg
+        module.fail_json(msg="Please specify valid vim type: cluster, datacenter, datastore, vds, vm")
+
+    si = si_connect(module)
+
+    vcenter_id = get_id(module, si,
+                        [vimtype],
+                        vcenter_object_name,
+                        False, True)
+
+    return False, vcenter_id
 
 
 def main():
@@ -163,16 +154,16 @@ def main():
             login=dict(required=True),
             password=dict(required=True),
             port=dict(type='int'),
-            resourcename=dict(type='str', required=True),
-            resourcevarname=dict(type='str', required=True),
-            resourcetype=dict(type='str', required=True),
+            vcenter_object_name=dict(type='str'),
+            vcenter_vim_type=dict(type='str'),
+            ansible_variable_name=dict(type='str')
         )
     )
 
     fail, result = core(module)
 
     if fail:
-        module.fail_json(msg=result)
+        module.fail_json(changed=False, msg=result)
     else:
         ansible_facts_dict = {
             "changed": False,
@@ -182,12 +173,14 @@ def main():
         }
 
         resource_id = result
-        resource_var = module.params.get('resourcevarname')
-        ansible_facts_dict['ansible_facts'].update({resource_var: resource_id})
+        var = module.params.get('ansible_variable_name')
+        ansible_facts_dict['ansible_facts'].update({var: resource_id})
         ansible_facts_dict['changed'] = True
         print json.dumps(ansible_facts_dict)
 
+
 from ansible.module_utils.basic import *
 from ansible.module_utils.facts import *
-main()
 
+if __name__ == "__main__":
+    main()
