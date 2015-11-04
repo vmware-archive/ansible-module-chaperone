@@ -1,19 +1,18 @@
 #!/usr/bin/python
 #
-# Copyright (c) 2015 VMware, inc.
+#  Copyright 2015 VMware, Inc.
 #
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
+#  Licensed under the Apache License, Version 2.0 (the "License");
+#  you may not use this file except in compliance with the License.
+#  You may obtain a copy of the License at
 #
-#     http://www.apache.org/licenses/LICENSE-2.0
+#      http://www.apache.org/licenses/LICENSE-2.0
 #
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-#
+#  Unless required by applicable law or agreed to in writing, software
+#  distributed under the License is distributed on an "AS IS" BASIS,
+#  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+#  See the License for the specific language governing permissions and
+#  limitations under the License.
 
 import httplib
 import base64
@@ -266,10 +265,15 @@ class VRASSOSettor:
         xmlResponse = response.read().decode(encoding='UTF-8')
 
         conn.close()
+
         if ( status == 200 and reason == 'OK'):
-            self.addToResultMessage("SSO configured successfully.")
+            validate=self.checkSSOConfigExists(token)
+            if(validate==False):
+                self.addToResultMessage("SSO update called returned but value NOT updated.")
+                return False
 
             return True
+
         else:
             self.addToResultMessage("Error configuring SSO. Error code: " + str(status))
             return False
@@ -307,6 +311,38 @@ class VRASSOSettor:
         else:
             self.addToResultMessage("Error code: " + str(status))
             return None
+    def getXMLForSSOConfigFromVRA(self, vRAInstance, token):
+
+        conn = httplib.HTTPSConnection(vRAInstance, 5480)
+        credentialString = "root:" + token
+        credentialStringBytes = credentialString.encode()
+        encodedCreds = base64.encodestring(credentialStringBytes).decode().replace('\n','')
+        headers = {"Authorization": "Basic " + encodedCreds, "Content-Type": "text/plain;charset=UTF-8"}
+        requestPayload = """<?xml version="1.0" encoding="utf-8"?>
+                            <request>
+                            <locale>en-US</locale>
+                            <action>query</action>
+                            <requestid>ssoInfo</requestid>
+                            </request>
+                        """
+
+        #todo : avoid concatenation
+        logging.debug("payload is:" + requestPayload)
+        logging.debug("Calling http post to get sso info")
+
+        conn.request('POST', "/service/cafe/config-page.py", requestPayload, headers)
+        response = conn.getresponse()
+        xmlResponse = response.read().decode(encoding='UTF-8')
+        status = response.status
+        reason = response.reason
+        conn.close()
+        if ( status == 200 and reason == 'OK'):
+            logging.debug("sso config fetched successfully")
+            return xmlResponse
+
+        else:
+            self.addToResultMessage("Error code: " + str(status))
+            return None
 
     def checkLicenseConfig(self, vRAInstance, token):
 
@@ -326,6 +362,50 @@ class VRASSOSettor:
             self.addToResultMessage("New license value is:" + newValue)
             #note: if current value is sam - it is a sub part of new value
             if(value in newValue):
+                return True
+            else:
+                return False
+
+        else:
+            self.addToResultMessage("No xml response for Host setting and ssl. Assuming not set")
+            return False
+
+    def checkSSOConfigExists(self, token):
+        vRAInstance=self.vra_host_name
+        xmlResponse = self.getXMLForSSOConfigFromVRA(vRAInstance, token)
+        id="sso.host"
+        if( xmlResponse is not None):
+            logging.debug(xmlResponse)
+            value = self.parseResponseToGetValue(xmlResponse,id)
+            if(value is None):
+                self.addToResultMessage("Current sso host value is None")
+                return False
+
+            logging.debug("Existing sso value on querying is:" + value)
+            if((value is not None ) and (value != "") and (len(value)>=3)):
+                return True
+            else:
+                return False
+        else:
+            self.addToResultMessage("No xml response for SSO settings. Assuming not set")
+            return False
+
+    def checkSSOConfigIsSame(self, token):
+        vRAInstance=self.vra_host_name
+        newValue=self.vra_sso_host
+        xmlResponse = self.getXMLForSSOConfigFromVRA(vRAInstance, token)
+        id="sso.host"
+        if( xmlResponse is not None):
+            logging.debug(xmlResponse)
+            value = self.parseResponseToGetValue(xmlResponse,id)
+            if(value is None or len(value)==0):
+                self.addToResultMessage("Current sso host value is None")
+                return False
+
+            self.addToResultMessage("Current sso value on querying is:" + value)
+            self.addToResultMessage("New sso host value is:" + newValue)
+            #note: if current value is sam - it is a sub part of new value
+            if(len(value)==len(newValue)  and value in newValue):
                 return True
             else:
                 return False
@@ -368,7 +448,24 @@ class VRASSOSettor:
             return False, "Login not successful "
 
         start = time.time()
-        self.configureSSO(token)
+        maxTryCount=2
+        tryCount=0
+        initialSSOSame=self.checkSSOConfigIsSame(token)
+        if(initialSSOSame):
+            self.addToResultMessage("Bypassing SSO config as it is same")
+        else:
+            #attempt update to new value. attempt many times
+            ssoSame=False
+            while(ssoSame==False and tryCount<maxTryCount):
+                tryCount=tryCount+1
+                self.configureSSO(token)
+                ssoSame=self.checkSSOConfigIsSame(token)
+
+            if(ssoSame):
+                self.addToResultMessage("SSO updated successfully")
+            else:
+                self.addToResultMessage("Tried changing or updating SSO config several times WITHOUT SUCCESS")
+
         end = time.time()
         timeForSSOSettings = end - start
 
