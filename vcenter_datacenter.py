@@ -18,7 +18,7 @@ DOCUMENTATION = '''
 module: vcenter_datacenter
 short_description: Manage VMware vSphere Datacenters
 description:
-    - Manage VMware vSphere Datacenters
+    - Create vcenter datacenter
 options:
     hostname:
         description:

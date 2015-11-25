@@ -15,6 +15,49 @@
 #  limitations under the License.
 #
 
+
+DOCUMENTATION = '''
+---
+module: vcenter_query
+Short_description: Query vCenter for inventory id by inventory name and return custom fact
+description:
+    - Provides an interface to query vcenter, return id as specified custom fact
+versoin_added: "0.1"
+options:
+    vcenter_object_name:
+        description:
+            - vCenter inventory object name
+        required: True
+        default: Null
+    ansible_variable_name:
+        description:
+            - Valid Ansible variable name for custom fact setting to returned id
+        required: True
+        default: Null
+    vcenter_vim_type:
+        description:
+            - vCenter resource type valid options are
+            - cluster, datacenter, datastore, dvs, dvs-port, vm, folder
+        required: True
+        default: Null
+'''
+EXAMPLES = '''
+- name: Get vCenter ID
+  ignore_errors: no
+  local_action:
+    module: vcenter_query
+    host: vcenter_host
+    login: vcenter_user
+    password: vcenter_password
+    port: vcenter_port
+    vcenter_object_name: "{{ vio_cluster_mgmt }}"
+    ansible_variable_name: 'your_var_name'
+    vcenter_vim_type: 'cluster'
+
+- name: test new custom var
+  debug: msg="New var value --> {{ your_var_name }}"
+'''
+
 try:
     import json
 except ImportError:
@@ -32,128 +75,79 @@ try:
 except ImportError:
     print("failed=True msg='pyVmomi is required to run this module'")
 
-DOCUMENTATION = '''
----
-module: vcenter_query
-Short_description: Query vCenter for inventory id by inventory name and return custom fact
-description:
-    - Provides an interface to query vcenter, return id as specified custom fact
-versoin_added: "0.1"
-options:
-    host:
-    resourcename:
-        description:
-            - vCenter inventory object name target
-        required: True
-        default: Null
-    resourcevarname:
-        description:
-            - Valid Ansible variable name for custom fact setting to returned id
-        required: True
-        default: Null
-    resourcetype:
-        description:
-            - vCenter resource type valid options are
-            - cluster, datacenter, datastore, dvs, dvs-port, vm
-        required: True
-        default: Null
-'''
-EXAMPLES = '''
-- name: Get vCenter ID
-  ignore_errors: no
-  local_action:
-    module: vcenter_query
-    host: vcenter_host
-    login: vcenter_user
-    password: vcenter_password
-    port: vcenter_port
-    resourcename: "{{ vio_cluster_mgmt }}"
-    resourcevarname: 'your_var_name'
-    resourcetype: 'cluster'
 
-- name: test new custom var
-  debug: msg="New var value --> {{ your_var_name }}"
-'''
 
-class Getnamesids(object):
+VIM_TYPE = {
+    'cluster': vim.ClusterComputeResource,
+    'datacenter': vim.Datacenter,
+    'datastore': vim.Datastore,
+    'vds': vim.DistributedVirtualSwitch,
+    'dvs-port': vim.Network,
+    'vm': vim.VirtualMachine,
+    'folder': vim.Folder,
+}
 
-    def __init__(self, module):
-       self.module = module
-       self.vsphere_host = module.params.get('host')
-       login_user = module.params.get('login')
-       login_password = module.params.get('password')
-       self.port = module.params.get('port')
+def connect_to_vcenter(module, disconnect_atexit=True):
+    hostname = module.params['host']
+    username = module.params['login']
+    password = module.params['password']
+    port = module.params['port']
 
-       try:
-           self.si = SmartConnect(host=self.vsphere_host, user=login_user, pwd=login_password, port=self.port)
-       except:
-           failmsg = "Could not connect to virtualserver: %s with: %s %s" \
-                     % (self.vsphere_host, login_user, login_password)
-           self.module.fail_json(msg=failmsg)
+    try:
+        service_instance = SmartConnect(
+            host=hostname,
+            user=username,
+            pwd=password,
+            port=port
+        )
 
-       atexit.register(Disconnect, self.si)
+        if disconnect_atexit:
+            atexit.register(Disconnect, service_instance)
 
-    @property
-    def content(self):
-        if not hasattr(self, '_content'):
-            self._content = self.si.RetrieveContent()
-        return self._content
+        return service_instance.RetrieveContent()
+    except vim.fault.InvalidLogin, invalid_login:
+        module.fail_json(msg=invalid_login.msg, apierror=str(invalid_login))
 
-    def get_target_object(self, vimtype, name, getobject=None, moid=None):
-        '''
-        :param vimtype: valid vim type
-        :param name: name of the target (module.params.get('resourcename'))
-        :param getobject: specify True if wanting to return the target object
-        :param moid: specify True if wanting to return the moId property
-        :param return: will return None if name is not found, or the object, or the moId of target
-        '''
-        try:
-            limit = self.content.rootFolder
-            container = self.content.viewManager.CreateContainerView(limit, vimtype, True)
-        except Exception as e:
-            self.module.fail_json(msg="Could not create container view: {}".format(e))
 
-        if name:
-            for x in container.view:
-                if x.name == name:
-                    if moid:
-                        return str(x._moId)
-                    if getobject:
-                        return x
-        else:
-            fail_msg = "Please enter a valid name"
-            self.module.fail_json(msg=fail_msg)
+def get_all_objects(content, vimtype):
+    obj = {}
+    container = content.viewManager.CreateContainerView(content.rootFolder, vimtype, True)
+    for managed_object_ref in container.view:
+        obj.update({managed_object_ref: managed_object_ref.name})
+    return obj
 
-    
+
+def find_vcenter_object_by_name(content, vimtype, object_name):
+    vcenter_object = get_all_objects(content, [vimtype])
+
+    for k, v in vcenter_object.items():
+        if v == object_name:
+            return k._moId
+    else:
+        return None
+
 def core(module):
 
-    rec_name = module.params.get('resourcename')
-    rec_type = module.params.get('resourcetype')
+    vcenter_object_name = module.params['vcenter_object_name']
+    vcenter_object_type = module.params['vcenter_vim_type']
 
-    vim_rec_type = {
-        'cluster': vim.ClusterComputeResource,
-        'datacenter': vim.Datacenter,
-        'datastore': vim.Datastore,
-        'vds': vim.DistributedVirtualSwitch,
-        'dvs-port': vim.Network,
-        'vm': vim.VirtualMachine
-    }
-
-    names_ids = Getnamesids(module)
-    
     try:
-        vim_type = vim_rec_type[rec_type]
+        vim_type = VIM_TYPE[vcenter_object_type]
     except KeyError:
-        fail_msg = "resourcetype not Valid, Valid: cluster, datacenter, datastore, vds, vm"
-        module.fail_json(msg=fail_msg)
-        
-    object_id = names_ids.get_target_object([vim_type], rec_name, None, True)
-        
-    if object_id:
-        return False, object_id
+        module.fail_json(msg="Invalid vim type specified: %s" % vcenter_object_type)
+
+    content = connect_to_vcenter(module)
+
+    object_moid = find_vcenter_object_by_name(
+        content,
+        vim_type,
+        vcenter_object_name
+    )
+
+    if object_moid:
+        return False, object_moid
     else:
-        msg = "FAILED: %s" % object_id
-        return True, msg
+        return True, "Failed to obtain moId for: %s" % vcenter_object_name
 
 
 def main():
@@ -163,9 +157,9 @@ def main():
             login=dict(required=True),
             password=dict(required=True),
             port=dict(type='int'),
-            resourcename=dict(type='str', required=True),
-            resourcevarname=dict(type='str', required=True),
-            resourcetype=dict(type='str', required=True),
+            vcenter_object_name=dict(type='str', required=True),
+            ansible_variable_name=dict(type='str', required=True),
+            vcenter_vim_type=dict(type='str', required=True),
         )
     )
 
@@ -181,9 +175,9 @@ def main():
             }
         }
 
-        resource_id = result
-        resource_var = module.params.get('resourcevarname')
-        ansible_facts_dict['ansible_facts'].update({resource_var: resource_id})
+        vcenter_moid = result
+        ansible_var_name = module.params['ansible_variable_name']
+        ansible_facts_dict['ansible_facts'].update({ansible_var_name: vcenter_moid})
         ansible_facts_dict['changed'] = True
         print json.dumps(ansible_facts_dict)
 
