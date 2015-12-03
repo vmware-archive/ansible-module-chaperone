@@ -40,10 +40,12 @@ options:
         vmk_mtu: valid mtu
     state:
         description:
-            - If the datacenter should be present or absent
+            - If the datacenter should be present or absent will not delete if service
+            type is managment
         choices: ['present', 'absent']
         required: True
 '''
+
 
 EXAMPLE = '''
 - name: Add vmk
@@ -81,7 +83,6 @@ except ImportError:
     HAS_PYVMOMI = False
 
 
-
 VALID_VMK_SERVICE_TYPES = [
     'faultToleranceLogging',
     'vmotion',
@@ -90,9 +91,8 @@ VALID_VMK_SERVICE_TYPES = [
     'vSphereReplicationNFC',
     'vSphereProvisioning',
     'vsan',
+    None,
 ]
-
-_add_vmk_serviceType = False
 
 
 def connect_to_vcenter(module, disconnect_atexit=True):
@@ -132,10 +132,6 @@ def wait_for_task(task):
             time.sleep(15)
         if task.info.state == vim.TaskInfo.State.queued:
             time.sleep(15)
-
-
-def state_exit_unchanged(module):
-    module.exit_json(changed=False)
 
 
 def get_all_objects(content, vimtype):
@@ -190,91 +186,15 @@ def get_portgroup_key(module, portgroup_name):
         return None
 
 
-def check_vmk_host(module, host, portgroup_key):
+def check_vmk_host_on_portgroup(host, portgroup_key):
 
     host_vnics = host.configManager.networkSystem.networkConfig.vnic
 
     for vnic in host_vnics:
         if vnic.spec.distributedVirtualPort.portgroupKey == portgroup_key:
-            return True
+            return vnic
     else:
         return None
-
-
-def check_vmk_state_service_type(module):
-
-    vmk_adapter_info = get_vmk_servcie_types(module)
-    vmk = get_vmk_adapter(module)
-
-    if not vmk_adapter_info[vmk]:
-        global _add_vmk_serviceType
-        _add_vmk_serviceType = True
-        return None
-
-    elif len(vmk_adapter_info[vmk]) > 1:
-        return None
-
-    elif module.params['vmk_service_type'] not in vmk_adapter_info[vmk]:
-        return None
-
-    elif module.params['vmk_service_type'] in vmk_adapter_info[vmk]:
-        return True
-
-
-def check_is_dhcp(module):
-    host = module.params['host']
-    vmk = get_vmk_adapter(module)
-
-    vnics = host.configManager.virtualNicManager.info.netConfig
-
-    for vnic in vnics:
-        for candidateVnic in vnic.candidateVnic:
-            if candidateVnic.device == vmk:
-                if candidateVnic.spec.ip.dhcp == True:
-                    return True
-    else:
-        return None
-
-
-def check_vmk_state_ip_info(module):
-
-    if not module.params['vmk_information']['static']:
-        check_dhcp = check_is_dhcp(module)
-        if check_dhcp:
-            return True
-        else:
-            return False
-
-    host = module.params['host']
-    portgroupKey = module.params['portgroup_key']
-    host_vnics = host.configManager.networkSystem.networkConfig.vnic
-    ip = module.params['vmk_information']['vmk_ip']
-    subnet = module.params['vmk_information']['vmk_subnet']
-
-    check_vmk_portgroup = check_vmk_host(module, host, portgroupKey)
-
-    if check_vmk_portgroup:
-        for vnic in host_vnics:
-            if (vnic.spec.ip.ipAddress == ip and vnic.spec.ip.subnetMask == subnet):
-                return True
-        else:
-            return None
-
-    return None
-
-
-def check_vmk_for_management_service(module, host):
-
-    host_management_vmks = []
-
-    management_vmks = host.configManager.virtualNicManager.QueryNetConfig("management")
-    selected_vmk_keys = management_vmks.selectedVnic
-
-    for vnic in management_vmks.candidateVnic:
-        if vnic.key in selected_vmk_keys:
-            host_management_vmks.append(vnic.device)
-
-    return host_management_vmks
 
 
 def vmkernel_adapter_spec(module):
@@ -320,20 +240,39 @@ def vmkernel_adapter_spec(module):
     return nic_spec
 
 
-def add_vmk_to_host(module, vmk_spec, service_type):
+def add_vmk_to_host(module, vmk_spec):
 
     host = module.params['host']
 
     try:
-        new_vmk = host.configManager.networkSystem.AddVirtualNic("", vmk_spec)
-        host.configManager.virtualNicManager.SelectVnicForNicType(service_type, new_vmk)
+        vmk = host.configManager.networkSystem.AddVirtualNic("", vmk_spec)
     except Exception as e:
         module.fail_json(msg="Failed to add vmk adapter: %s" % str(e))
 
-    if new_vmk:
-        return True
+    return vmk
+
+
+def check_vmk_networkConfig(module):
+
+    networkConfig_check = False
+    vnic = module.params['vnic']
+    vnic_config = module.params['vmk_information']
+
+    mtu_check = (vnic_config['vmk_mtu'] == vnic.spec.mtu)
+
+    if not vnic_config['static']:
+
+        if vnic.spec.ip.dhcp and mtu_check:
+            networkConfig_check = True
     else:
-        return False
+        dhcp_check = (vnic_config['static'] != vnic.spec.ip.dhcp)
+        ip_check = (vnic_config['vmk_ip'] == vnic.spec.ip.ipAddress)
+        subnet_check = (vnic_config['vmk_subnet'] == vnic.spec.ip.subnetMask)
+
+        if dhcp_check and ip_check and subnet_check and mtu_check:
+            networkConfig_check = True
+
+    return networkConfig_check
 
 
 def get_vmk_adapter(module):
@@ -360,13 +299,41 @@ def get_vmk_servcie_types(module):
     }
 
     for vmk_type in VALID_VMK_SERVICE_TYPES:
-        vmks = host.configManager.virtualNicManager.QueryNetConfig(vmk_type)
-        if vmks.selectedVnic:
-            for vmk in vmks.candidateVnic:
-                if vmk.key in vmks.selectedVnic and vmk.device == target_vmk:
-                    host_vmk_service_types[target_vmk].append(vmk_type)
+        if vmk_type is not None:
+            vmks = host.configManager.virtualNicManager.QueryNetConfig(vmk_type)
+            if vmks.selectedVnic:
+                for vmk in vmks.candidateVnic:
+                    if vmk.key in vmks.selectedVnic and vmk.device == target_vmk:
+                        host_vmk_service_types[target_vmk].append(vmk_type)
 
     return host_vmk_service_types
+
+
+def check_serviceType(module):
+
+    vmk = get_vmk_adapter(module)
+    serviceType = module.params['vmk_service_type']
+    vmk_services = get_vmk_servcie_types(module)
+
+    if not serviceType and not vmk_services[vmk]:
+        return True
+    elif len(vmk_services[vmk]) > 1:
+        return None
+    elif serviceType not in vmk_services[vmk]:
+        return None
+    elif serviceType in vmk_services[vmk]:
+        return True
+
+
+def check_vmk_state_spec(module):
+
+    networkConfig_check = check_vmk_networkConfig(module)
+    service_type_check = check_serviceType(module)
+
+    if service_type_check and networkConfig_check:
+        return True
+    else:
+        return False
 
 
 def unset_vmk_service_type(module, vmk, service_type, vmk_spec):
@@ -385,67 +352,18 @@ def unset_vmk_service_type(module, vmk, service_type, vmk_spec):
         module.fail_json(msg="Failed to update vnic: %s" % str(e))
 
 
-def state_update_vmk_host(module):
+def check_vmk_for_management_service(module, host):
 
-    host = module.params['host']
-    service_type = module.params['vmk_service_type']
+    host_management_vmks = []
 
-    vmk_spec = vmkernel_adapter_spec(module)
-    vmk_adapter = get_vmk_adapter(module)
-    vmk_serviceTypes = get_vmk_servcie_types(module)
-    result_msg = "Updated vmk: %s on host: %s" % (vmk_adapter, host.name)
+    management_vmks = host.configManager.virtualNicManager.QueryNetConfig("management")
+    selected_vmk_keys = management_vmks.selectedVnic
 
+    for vnic in management_vmks.candidateVnic:
+        if vnic.key in selected_vmk_keys:
+            host_management_vmks.append(vnic.device)
 
-    try:
-        host.configManager.networkSystem.UpdateVirtualNic(
-            vmk_adapter,
-            vmk_spec
-        )
-
-        if _add_vmk_serviceType:
-            host.configManager.virtualNicManager.SelectVnicForNicType(
-                service_type,
-                vmk_adapter
-            )
-            module.exit_json(changed=True, result=result_msg)
-
-        for serviceType in vmk_serviceTypes[vmk_adapter]:
-            if serviceType != service_type:
-                unset_vmk_service_type(module, vmk_adapter, serviceType, vmk_spec)
-
-        vmk_serviceTypes = get_vmk_servcie_types(module)
-
-        if service_type in vmk_serviceTypes[vmk_adapter]:
-            if len(vmk_serviceTypes[vmk_adapter]) == 1:
-                module.exit_json(changed=True, result=result_msg)
-        else:
-            host.configManager.virtualNicManager.SelectVnicForNicType(
-                service_type,
-                vmk_adapter
-            )
-            module.exit_json(changed=True, result=result_msg)
-
-    except Exception as e:
-        module.exit_json(msg="Failed to update vmk: %s" % str(e))
-
-
-def state_create_vmk_host(module):
-
-    vmk_spec = vmkernel_adapter_spec(module)
-    service_type = module.params['vmk_service_type']
-
-    if service_type in VALID_VMK_SERVICE_TYPES:
-        vmk_service_type = service_type
-    else:
-        module.fail_json(msg="Invalid service type specified: %s" % service_type)
-
-    add_vmk = add_vmk_to_host(module, vmk_spec, vmk_service_type)
-
-    if add_vmk:
-        result_msg = "Added vmkernel adapter"
-        module.exit_json(changed=True, result=result_msg)
-    else:
-        module.fail_json(msg="Failed to add vmk to host")
+    return host_management_vmks
 
 
 def state_delete_vmk_host(module):
@@ -453,10 +371,7 @@ def state_delete_vmk_host(module):
     host = module.params['host']
     vmk = get_vmk_adapter(module)
 
-    check_management_service = check_vmk_for_management_service(
-        module,
-        host,
-    )
+    check_management_service = check_vmk_for_management_service(module, host)
 
     if vmk in check_management_service:
         result_msg = "vmk: %s is a management vmk and cannot be deleted" % vmk
@@ -469,32 +384,54 @@ def state_delete_vmk_host(module):
     module.exit_json(changed=True, result=result_msg)
 
 
-def check_vmk_mtu(module):
+def state_update_vmk_host(module):
 
     host = module.params['host']
-    mtu = module.params['vmk_information']['vmk_mtu']
-    vmk = get_vmk_adapter(module)
+    vmk_spec = vmkernel_adapter_spec(module)
+    vmk_adapter = get_vmk_adapter(module)
+    vmk_service_type = module.params['vmk_service_type']
+    vmk_serviceTypes = get_vmk_servcie_types(module)
 
-    vnics = host.configManager.virtualNicManager.info.netConfig
+    try:
+        host.configManager.networkSystem.UpdateVirtualNic(vmk_adapter, vmk_spec)
 
-    for vnic in vnics:
-        for candidateVnic in vnic.candidateVnic:
-            if candidateVnic.device == vmk:
-                if candidateVnic.spec.mtu == mtu:
-                    return True
-    else:
-        return None
+        if vmk_service_type:
+            for serviceType in vmk_serviceTypes[vmk_adapter]:
+                if serviceType != vmk_service_type:
+                    unset_vmk_service_type(module, vmk_adapter, serviceType, vmk_spec)
+
+        elif not vmk_service_type:
+            for serviceType in vmk_serviceTypes[vmk_adapter]:
+                unset_vmk_service_type(module, vmk_adapter, serviceType, vmk_spec)
+
+    except Exception as e:
+        module.exit_json(msg="Failed to update vmk: {}".format(e))
+
+    module.exit_json(changed=True, result="update vmk")
 
 
-def check_vmk_state_spec(module):
-    check_serviceType = check_vmk_state_service_type(module)
-    check_ip_info = check_vmk_state_ip_info(module)
-    check_mtu = check_vmk_mtu(module)
+def state_create_vmk_host(module):
+    host = module.params['host']
+    service_type = module.params['vmk_service_type']
 
-    if check_serviceType and check_ip_info and check_mtu:
-        return True
-    else:
-        return False
+
+    vmk_spec = vmkernel_adapter_spec(module)
+    vmk = add_vmk_to_host(module, vmk_spec)
+
+    if service_type:
+        host.configManager.virtualNicManager.SelectVnicForNicType(service_type, vmk)
+
+    result_msg = "Added vmk: {} to host: {} on portgroup: {}".format(
+        vmk,
+        host.name,
+        module.params['portgroup_name']
+    )
+
+    module.exit_json(changed=True, result=result_msg)
+
+
+def state_exit_unchanged(module):
+    module.exit_json(changed=False)
 
 
 def check_vmk_host_state(module):
@@ -529,14 +466,18 @@ def check_vmk_host_state(module):
         module.fail_json("Failed to get the portgroup key for portgroup: %s" % portgroup_name)
     module.params['portgroup_key'] = portgroup_key
 
-    check_vmk_on_host = check_vmk_host(module, host, portgroup_key)
+    vnic_check = check_vmk_host_on_portgroup(
+        host,
+        portgroup_key
+    )
 
-    if check_vmk_on_host is None:
+    if vnic_check is None:
         return 'absent'
     else:
-        check_spec = check_vmk_state_spec(module)
+        module.params['vnic'] = vnic_check
+        vnic_spec_check = check_vmk_state_spec(module)
 
-        if check_spec:
+        if vnic_spec_check:
             return 'present'
         else:
             return 'update'
