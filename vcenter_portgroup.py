@@ -17,10 +17,10 @@
 
 DOCUMENTATION = '''
 ---
-module: vmware_port_group
+module: vcenter_portgroup
 short_description: Manage VMware vSphere VDS Portgroup
 description:
-	- Manage VMware vSphere the portgroups in a given virtual distributed switch
+	- Manage VMware vCenter portgroups in a given virtual distributed switch
 version_added: 1.0
 author: '"Daniel Kim" <kdaniel () vmware.com>'
 notes:

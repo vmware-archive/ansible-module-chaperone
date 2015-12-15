@@ -68,8 +68,7 @@ options:
 EXAMPLES = '''
 - name: Configure Hosts On VDS only removing vswitch
   ignore_errors: no
-  local_action:
-    module: vcenter_config_host_vds_only
+  vcenter_config_host_vds_only:
     host: "{{ vcenter_host }}"
     login: "{{ vcenter_user }}"
     password: "{{ vcenter_password }}"
