@@ -64,8 +64,7 @@ options:
 EXAMPLES = '''
 - name: Add Host to Clusters
   ignore_errors: no
-  local_action:
-    module: vcenter_addhost
+  vcenter_addhost:
     host: "{{ vcenter_host }}"
     login: "{{ vcenter_user }}"
     password: "{{ vcenter_password }}"
@@ -74,7 +73,7 @@ EXAMPLES = '''
     cluster_name: "{{ item.cluster }}"
     esxi_hostname: "{{ item.host }}"
     esxi_username: "root"
-    esxi_password: "VMware1!"
+    esxi_password: "password"
     state: 'present'
   with_items:
     - { cluster: 'vio-edge-1', host: '172.16.78.162' }
