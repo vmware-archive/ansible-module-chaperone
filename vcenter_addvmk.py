@@ -50,8 +50,7 @@ options:
 EXAMPLE = '''
 - name: Add vmk
   ignore_errors: no
-  local_action:
-    module: vcenter_addvmk
+  vcenter_addvmk:
     host: "{{ vcenter_host }}"
     login: "{{ vcenter_user }}"
     password: "{{ vcenter_password }}"
@@ -86,7 +85,6 @@ except ImportError:
 VALID_VMK_SERVICE_TYPES = [
     'faultToleranceLogging',
     'vmotion',
-    'management',
     'vSphereReplication',
     'vSphereReplicationNFC',
     'vSphereProvisioning',
