@@ -6,11 +6,11 @@ short_description: Add host to nfs datastore
 description:
     - Add host to specified nfs datastore
 options:
-    hostname:
+    host:
         description:
             - The hostname or IP address of the vSphere vCenter API server
         required: True
-    username:
+    login:
         description:
             - The username of the vSphere vCenter
         required: True
@@ -20,6 +20,10 @@ options:
             - The password of the vSphere vCenter
         required: True
         aliases: ['pass', 'pwd']
+    port:
+        description:
+            - The TCP port of the vSphere API
+        required: True
     esxi_hostname:
         description:
             - The esxi hostname or ip to add to nfs ds
@@ -64,8 +68,7 @@ options:
 EXAMPLE = '''
 - name: Add NFS DS to Host
   ignore_errors: no
-  local_action:
-    module: vcenter_add_nfs_ds
+  vcenter_add_nfs_ds:
     host: "{{ vcenter_host }}"
     login: "{{ vcenter_user }}"
     password: "{{ vcenter_password }}"
