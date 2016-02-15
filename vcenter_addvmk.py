@@ -1,11 +1,27 @@
 #!/usr/bin/env python
-
+#  Copyright 2015 VMware, Inc.
+#
+#  Licensed under the Apache License, Version 2.0 (the "License");
+#  you may not use this file except in compliance with the License.
+#  You may obtain a copy of the License at
+#
+#      http://www.apache.org/licenses/LICENSE-2.0
+#
+#  Unless required by applicable law or agreed to in writing, software
+#  distributed under the License is distributed on an "AS IS" BASIS,
+#  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+#  See the License for the specific language governing permissions and
+#  limitations under the License.
+#
 DOCUMENTATION = '''
 module: vcenter_addvmk
-short_description: Manage VMware vSphere Datacenters
+short_description: add vmkernel adapter to host and specified portgroup on vds
 description:
-    - Add vmkernel adapter to a host. Defining service type and static or
-    dhcp. Module will
+    - Add vmkernel adapter to a host that has been configured on a vds
+    - Assumptions: this modules assumes that the host is already configured on a vds with a management
+    vmkernel adapter configured on the corresponding management portgroup
+notes:
+    - Tested on vSphere 6.0
 options:
     hostname:
         description:
@@ -15,29 +31,51 @@ options:
         description:
             - The username of the vSphere vCenter
         required: True
-        aliases: ['user', 'admin']
     password:
         description:
             - The password of the vSphere vCenter
         required: True
-        aliases: ['pass', 'pwd']
     esxi_hostname:
         description:
-            - The password of the vSphere vCenter
+            - The hostname or ip of the esxi host to add the vmkernel adapter
         required: True
     portgroup_name:
         description:
-            - The password of the vSphere vCenter
+            - The name of the portgroup to add the vmkernel adapter to
         required: True
-    vmk_information:
+    dhcp:
         description:
-            - The password of the vSphere vCenter
-        static: bool
-        vmk_ip: valid ip address for portgroup vlan or network
-        vmk_subnet: valid subnet for portgroup vlan or network
-        vmk_service_type: vmkernel adapter service type, see VALID_VMK_SERVICE_TYPES
-                          for valid service types
-        vmk_mtu: valid mtu
+            - Specify if you require dhcp or static addressing
+        required: True
+        choices: [True, False]
+    ip_address:
+        description:
+            - Specify the ip address if dhcp is set to True
+        required: False
+    subnet_mask:
+        description:
+            - Specify the subnet mask if dhsp is set to True
+        required: False
+    service_type:
+        description:
+            - Specify the valid service type if left blank the service type will be None and no service type will be specified
+        required: False
+        choices: [
+            'faultToleranceLogging',
+            'vmotion',
+            'vSphereReplication',
+            'vSphereReplicationNFC',
+            'vSphereProvisioning',
+            'vsan',
+            'management',
+        ]
+        default: None
+    mtu:
+        description:
+            - Specify the mtu
+        type: int
+        required: False
+        default: 1500
     state:
         description:
             - If the datacenter should be present or absent will not delete if service
@@ -56,13 +94,12 @@ EXAMPLE = '''
     password: "{{ vcenter_password }}"
     port: "{{ vcenter_port }}"
     esxi_hostname: '172.16.78.150'
-    portgroup_name: 'VIO vMotion'
-    vmk_information:
-      static: False
-      vmk_ip: '172.16.78.99'
-      vmk_subnet: '255.255.255.0'
-      vmk_service_type: 'vmotion'
-      vmk_mtu: 1500
+    portgroup_name: 'vMotion Portgroup'
+    dhcp: False
+    ip_address: '172.16.78.99'
+    subnet_mask: '255.255.255.0'
+    service_type: 'vmotion'
+    mtu: 1500
     state: 'present'
   tags:
     - addvmk
@@ -72,8 +109,6 @@ try:
     import atexit
     import time
     import requests
-    import sys
-    import collections
     from pyVim import connect
     from pyVmomi import vim, vmodl
 
@@ -89,7 +124,8 @@ VALID_VMK_SERVICE_TYPES = [
     'vSphereReplicationNFC',
     'vSphereProvisioning',
     'vsan',
-    None,
+    'management',
+    None
 ]
 
 
@@ -189,7 +225,9 @@ def check_vmk_host_on_portgroup(host, portgroup_key):
     host_vnics = host.configManager.networkSystem.networkConfig.vnic
 
     for vnic in host_vnics:
-        if vnic.spec.distributedVirtualPort.portgroupKey == portgroup_key:
+        if vnic.spec.distributedVirtualPort is None:
+            continue
+        elif vnic.spec.distributedVirtualPort.portgroupKey == portgroup_key:
             return vnic
     else:
         return None
@@ -199,18 +237,18 @@ def vmkernel_adapter_spec(module):
 
     vdsuuid = module.params['vds_uuid']
     portgroupKey = module.params['portgroup_key']
-    static_ip = module.params['vmk_information']['static']
-    mtu = module.params['vmk_information']['vmk_mtu']
+    dhcp = module.params['dhcp']
+    mtu = module.params['mtu']
 
     ipv6_spec = vim.host.IpConfig.IpV6AddressConfiguration(
         autoConfigurationEnabled=False,
         dhcpV6Enabled=False
     )
 
-    if static_ip:
+    if not dhcp:
 
-        ipaddress = module.params['vmk_information']['vmk_ip']
-        subnetMask = module.params['vmk_information']['vmk_subnet']
+        ipaddress = module.params['ip_address']
+        subnetMask = module.params['subnet_mask']
 
         ip_spec = vim.host.IpConfig(
             dhcp=False,
@@ -250,29 +288,6 @@ def add_vmk_to_host(module, vmk_spec):
     return vmk
 
 
-def check_vmk_networkConfig(module):
-
-    networkConfig_check = False
-    vnic = module.params['vnic']
-    vnic_config = module.params['vmk_information']
-
-    mtu_check = (vnic_config['vmk_mtu'] == vnic.spec.mtu)
-
-    if not vnic_config['static']:
-
-        if vnic.spec.ip.dhcp and mtu_check:
-            networkConfig_check = True
-    else:
-        dhcp_check = (vnic_config['static'] != vnic.spec.ip.dhcp)
-        ip_check = (vnic_config['vmk_ip'] == vnic.spec.ip.ipAddress)
-        subnet_check = (vnic_config['vmk_subnet'] == vnic.spec.ip.subnetMask)
-
-        if dhcp_check and ip_check and subnet_check and mtu_check:
-            networkConfig_check = True
-
-    return networkConfig_check
-
-
 def get_vmk_adapter(module):
 
     host = module.params['host']
@@ -281,7 +296,9 @@ def get_vmk_adapter(module):
     host_vnics = host.configManager.networkSystem.networkConfig.vnic
 
     for vnic in host_vnics:
-        if vnic.spec.distributedVirtualPort.portgroupKey == portgroup_key:
+        if vnic.spec.distributedVirtualPort is None:
+            continue
+        elif vnic.spec.distributedVirtualPort.portgroupKey == portgroup_key:
             return vnic.device
     else:
         return None
@@ -310,7 +327,7 @@ def get_vmk_servcie_types(module):
 def check_serviceType(module):
 
     vmk = get_vmk_adapter(module)
-    serviceType = module.params['vmk_service_type']
+    serviceType = module.params['service_type']
     vmk_services = get_vmk_servcie_types(module)
 
     if not serviceType and not vmk_services[vmk]:
@@ -321,6 +338,20 @@ def check_serviceType(module):
         return None
     elif serviceType in vmk_services[vmk]:
         return True
+
+
+def check_vmk_networkConfig(module):
+
+    vnic = module.params['vnic']
+
+    if module.params['dhcp']:
+        return (module.params['dhcp'] == vnic.spec.ip.dhcp)
+    else:
+        return (
+            module.params['ip_address'] == vnic.spec.ip.ipAddress and
+            module.params['subnet_mask'] == vnic.spec.ip.subnetMask and
+            module.params['mtu'] == vnic.spec.mtu
+        )
 
 
 def check_vmk_state_spec(module):
@@ -387,7 +418,7 @@ def state_update_vmk_host(module):
     host = module.params['host']
     vmk_spec = vmkernel_adapter_spec(module)
     vmk_adapter = get_vmk_adapter(module)
-    vmk_service_type = module.params['vmk_service_type']
+    vmk_service_type = module.params['service_type']
     vmk_serviceTypes = get_vmk_servcie_types(module)
 
     try:
@@ -397,8 +428,12 @@ def state_update_vmk_host(module):
             for serviceType in vmk_serviceTypes[vmk_adapter]:
                 if serviceType != vmk_service_type:
                     unset_vmk_service_type(module, vmk_adapter, serviceType, vmk_spec)
+            host.configManager.virtualNicManager.SelectVnicForNicType(
+                vmk_service_type,
+                vmk_adapter
+            )
 
-        elif not vmk_service_type:
+        else:
             for serviceType in vmk_serviceTypes[vmk_adapter]:
                 unset_vmk_service_type(module, vmk_adapter, serviceType, vmk_spec)
 
@@ -410,7 +445,7 @@ def state_update_vmk_host(module):
 
 def state_create_vmk_host(module):
     host = module.params['host']
-    service_type = module.params['vmk_service_type']
+    service_type = module.params['service_type']
 
 
     vmk_spec = vmkernel_adapter_spec(module)
@@ -429,18 +464,17 @@ def state_create_vmk_host(module):
 
 
 def state_exit_unchanged(module):
-    module.exit_json(changed=False)
+    module.exit_json(changed=False, msg="No Changes made")
 
 
 def check_vmk_host_state(module):
 
     esxi_hostname = module.params['esxi_hostname']
     portgroup_name = module.params['portgroup_name']
-    vmk_service_type = module.params['vmk_information']['vmk_service_type']
+    vmk_service_type = module.params['service_type']
 
     if vmk_service_type not in VALID_VMK_SERVICE_TYPES:
-        module.fail_json(msg="Service type: %s NOT Valid" % vmk_service_type)
-    module.params['vmk_service_type'] = vmk_service_type
+        module.fail_json(msg="Service type --> %s" % vmk_service_type)
 
     content = connect_to_vcenter(module)
     module.params['content'] = content
@@ -464,15 +498,13 @@ def check_vmk_host_state(module):
         module.fail_json("Failed to get the portgroup key for portgroup: %s" % portgroup_name)
     module.params['portgroup_key'] = portgroup_key
 
-    vnic_check = check_vmk_host_on_portgroup(
-        host,
-        portgroup_key
-    )
+    vnic_check = check_vmk_host_on_portgroup(host, portgroup_key)
 
-    if vnic_check is None:
+    if not vnic_check:
         return 'absent'
     else:
         module.params['vnic'] = vnic_check
+
         vnic_spec_check = check_vmk_state_spec(module)
 
         if vnic_spec_check:
@@ -490,11 +522,15 @@ def main():
         port=dict(required=True, type='int'),
         esxi_hostname=dict(required=True, type='str'),
         portgroup_name=dict(required=True, type='str'),
-        vmk_information=dict(required=True, type='dict'),
+        dhcp=dict(required=True, type='bool'),
+        ip_address=dict(required=False, type='str'),
+        subnet_mask=dict(required=False, type='str'),
+        service_type=dict(default=None, required=False),
+        mtu=dict(required=False, type='int', default=1500),
         state=dict(default='present', choices=['present', 'absent'], type='str'),
     )
 
-    module = AnsibleModule(argument_spec=argument_spec, supports_check_mode=True)
+    module = AnsibleModule(argument_spec=argument_spec, supports_check_mode=False)
 
     if not HAS_PYVMOMI:
         module.fail_json(msg='pyvmomi is required for this module')
