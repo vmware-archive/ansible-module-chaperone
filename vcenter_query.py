@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/python
 #
 #  Copyright 2015 VMware, Inc.
 #
@@ -69,12 +69,12 @@ import ssl
 if hasattr(ssl, '_create_default_https_context') and hasattr(ssl, '_create_unverified_context'):
     ssl._create_default_https_context = ssl._create_unverified_context
 
+
 try:
     from pyVim.connect import SmartConnect, Disconnect
     from pyVmomi import vim, vmodl
 except ImportError:
     print("failed=True msg='pyVmomi is required to run this module'")
-
 
 
 VIM_TYPE = {
@@ -87,38 +87,9 @@ VIM_TYPE = {
     'folder': vim.Folder,
 }
 
-def connect_to_vcenter(module, disconnect_atexit=True):
-    hostname = module.params['host']
-    username = module.params['login']
-    password = module.params['password']
-    port = module.params['port']
-
-    try:
-        service_instance = SmartConnect(
-            host=hostname,
-            user=username,
-            pwd=password,
-            port=port
-        )
-
-        if disconnect_atexit:
-            atexit.register(Disconnect, service_instance)
-
-        return service_instance.RetrieveContent()
-    except vim.fault.InvalidLogin, invalid_login:
-        module.fail_json(msg=invalid_login.msg, apierror=str(invalid_login))
-
-
-def get_all_objects(content, vimtype):
-    obj = {}
-    container = content.viewManager.CreateContainerView(content.rootFolder, vimtype, True)
-    for managed_object_ref in container.view:
-        obj.update({managed_object_ref: managed_object_ref.name})
-    return obj
-
 
 def find_vcenter_object_by_name(content, vimtype, object_name):
-    vcenter_object = get_all_objects(content, [vimtype])
+    vcenter_object = get_all_objs(content, [vimtype])
 
     for k, v in vcenter_object.items():
         if v == object_name:
@@ -126,7 +97,8 @@ def find_vcenter_object_by_name(content, vimtype, object_name):
     else:
         return None
 
-def core(module):
+
+def get_moid(module):
 
     vcenter_object_name = module.params['vcenter_object_name']
     vcenter_object_type = module.params['vcenter_vim_type']
@@ -136,7 +108,7 @@ def core(module):
     except KeyError:
         module.fail_json(msg="Invalid vim type specified: %s" % vcenter_object_type)
 
-    content = connect_to_vcenter(module)
+    content = connect_to_api(module)
 
     object_moid = find_vcenter_object_by_name(
         content,
@@ -151,19 +123,20 @@ def core(module):
 
 
 def main():
-    module = AnsibleModule(
-        argument_spec=dict(
-            host=dict(required=True),
-            login=dict(required=True),
-            password=dict(required=True),
-            port=dict(type='int'),
+
+    argument_spec = vmware_argument_spec()
+
+    argument_spec.update(
+        dict(
             vcenter_object_name=dict(type='str', required=True),
             ansible_variable_name=dict(type='str', required=True),
             vcenter_vim_type=dict(type='str', required=True),
         )
     )
 
-    fail, result = core(module)
+    module = AnsibleModule(argument_spec=argument_spec, supports_check_mode=False)
+
+    fail, result = get_moid(module)
 
     if fail:
         module.fail_json(msg=result)
@@ -183,5 +156,7 @@ def main():
 
 from ansible.module_utils.basic import *
 from ansible.module_utils.facts import *
-main()
+from ansible.module_utils.vmware import *
 
+if __name__ == '__main__':
+    main()
