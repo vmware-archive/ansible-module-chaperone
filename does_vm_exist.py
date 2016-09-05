@@ -53,7 +53,7 @@ def main():
             for virtual_machine in vm_list:
                 check_vm_and_children(vm_name, virtual_machine, 1, module)
 
-            module.exit_json(msg="Appliance does not exist.")
+        module.exit_json(msg="Appliance does not exist.")
 
     except vmodl.MethodFault as error:
         module.fail_json(msg="vmodl.MethodFault")
