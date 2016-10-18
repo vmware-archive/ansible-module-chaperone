@@ -19,107 +19,80 @@
 DOCUMENTATION = '''
 ---
 module: vcenter_query
-Short_description: Query vCenter for inventory id by inventory name and return custom fact
+Short_description: Query vCenter for moId ID
 description:
-    - Provides an interface to query vcenter, return id as specified custom fact
-versoin_added: "0.1"
+    Module will return moId id for given vcenter object name
+requirements:
+    - ansible 2.x
+    - pyvmomi 5.x +
 options:
+    hostname:
+        description:
+            - The hostname or IP address of the vSphere vCenter API server
+        required: True
+    username:
+        description:
+            - The username of the vSphere vCenter with Admin rights
+        required: True
+        aliases: ['user', 'admin']
+    password:
+        description:
+            - The password of the vSphere vCenter user
+        required: True
+        aliases: ['pass', 'pwd']
     vcenter_object_name:
         description:
             - vCenter inventory object name
         required: True
         default: Null
-    ansible_variable_name:
-        description:
-            - Valid Ansible variable name for custom fact setting to returned id
-        required: True
-        default: Null
     vcenter_vim_type:
         description:
             - vCenter resource type valid options are
-            - cluster, datacenter, datastore, dvs, dvs-port, vm, folder
+            - cluster, datacenter, datastore, vds, dvs-port, vm, folder
         required: True
         default: Null
 '''
-EXAMPLES = '''
-- name: Get vCenter ID
-  ignore_errors: no
-  local_action:
-    module: vcenter_query
-    host: vcenter_host
-    login: vcenter_user
-    password: vcenter_password
-    port: vcenter_port
-    vcenter_object_name: "{{ vio_cluster_mgmt }}"
-    ansible_variable_name: 'your_var_name'
-    vcenter_vim_type: 'cluster'
 
-- name: test new custom var
-  debug: msg="New var value --> {{ your_var_name }}"
+EXAMPLES = '''
+- name: Get External Network Portgroup MOID
+  vcenter_query:
+    hostname: "{{ vio_oms_vcenter_hostname }}"
+    username: "{{ vio_oms_vcenter_username }}"
+    password: "{{ vio_oms_vcenter_pwd }}"
+    validate_certs: False
+    vcenter_object_name: "{{ vio_val_extnet_portgroup }}"
+    vcenter_vim_type: "dvs-port"
+  register: ext_net_portgroup_moid
+  tags:
+    - validate_openstack
 '''
 
 try:
     import json
-except ImportError:
-    import simplejson as json
-
-import atexit
-
-import ssl
-if hasattr(ssl, '_create_default_https_context') and hasattr(ssl, '_create_unverified_context'):
-    ssl._create_default_https_context = ssl._create_unverified_context
-
-
-try:
-    from pyVim.connect import SmartConnect, Disconnect
     from pyVmomi import vim, vmodl
+    HAS_PYVMOMI = True
 except ImportError:
-    print("failed=True msg='pyVmomi is required to run this module'")
-
+    HAS_PYVMOMI = False
 
 VIM_TYPE = {
-    'cluster': vim.ClusterComputeResource,
-    'datacenter': vim.Datacenter,
-    'datastore': vim.Datastore,
-    'vds': vim.DistributedVirtualSwitch,
-    'dvs-port': vim.Network,
-    'vm': vim.VirtualMachine,
-    'folder': vim.Folder,
+    'cluster': [vim.ClusterComputeResource],
+    'datacenter': [vim.Datacenter],
+    'datastore': [vim.Datastore],
+    'vds': [vim.dvs.VmwareDistributedVirtualSwitch],
+    'dvs-port': [vim.Network],
+    'vm': [vim.VirtualMachine],
+    'folder': [vim.Folder],
 }
 
 
 def find_vcenter_object_by_name(content, vimtype, object_name):
-    vcenter_object = get_all_objs(content, [vimtype])
 
-    for k, v in vcenter_object.items():
-        if v == object_name:
-            return k._moId
-    else:
-        return None
+    vcenter_mos = get_all_objs(content, vimtype)
 
-
-def get_moid(module):
-
-    vcenter_object_name = module.params['vcenter_object_name']
-    vcenter_object_type = module.params['vcenter_vim_type']
-
-    try:
-        vim_type = VIM_TYPE[vcenter_object_type]
-    except KeyError:
-        module.fail_json(msg="Invalid vim type specified: %s" % vcenter_object_type)
-
-    content = connect_to_api(module)
-
-    object_moid = find_vcenter_object_by_name(
-        content,
-        vim_type,
-        vcenter_object_name
-    )
-
-    if object_moid:
-        return False, object_moid
-    else:
-        return True, "Failed to obtain moId for: %s" % vcenter_object_name
+    for mo, mo_name in vcenter_mos.items():
+        if mo_name == object_name:
+            return mo
+    return None
 
 
 def main():
@@ -129,33 +102,32 @@ def main():
     argument_spec.update(
         dict(
             vcenter_object_name=dict(type='str', required=True),
-            ansible_variable_name=dict(type='str', required=True),
             vcenter_vim_type=dict(type='str', required=True),
         )
     )
 
     module = AnsibleModule(argument_spec=argument_spec, supports_check_mode=False)
 
-    fail, result = get_moid(module)
+    if not HAS_PYVMOMI:
+        module.fail_json(msg='pyvmomi is required for this module')
 
-    if fail:
-        module.fail_json(msg=result)
+    object_id = None
+
+    content = connect_to_api(module)
+
+    vcenter_mo = find_vcenter_object_by_name(content,
+                                             VIM_TYPE[module.params['vcenter_vim_type']],
+                                             module.params['vcenter_object_name'])
+
+    if vcenter_mo:
+        object_id = vcenter_mo._moId
     else:
-        ansible_facts_dict = {
-            "changed": False,
-            "ansible_facts": {
+        module.fail_json(msg="Failed to get MOID for: {}".format(module.params['vcenter_object_name']))
 
-            }
-        }
+    module.exit_json(changed=False, object_id=object_id)
 
-        vcenter_moid = result
-        ansible_var_name = module.params['ansible_variable_name']
-        ansible_facts_dict['ansible_facts'].update({ansible_var_name: vcenter_moid})
-        ansible_facts_dict['changed'] = True
-        print json.dumps(ansible_facts_dict)
 
 from ansible.module_utils.basic import *
-from ansible.module_utils.facts import *
 from ansible.module_utils.vmware import *
 
 if __name__ == '__main__':
